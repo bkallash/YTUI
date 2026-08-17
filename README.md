@@ -43,6 +43,11 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 - **Interactive Results**: View title, uploader, duration, view counts, and upload dates before downloading.
 
 ### 🎛️ Dual-Column Side-by-Side Stream Matrix
+
+<p align="center">
+  <img src="assets/format_screen.svg" alt="Format Selection Matrix" width="100%"/>
+</p>
+
 - **Independent Stream Pairing**:
   - **Left Column (Video)**: Choose 4K, 2K, 1080p, 720p, 480p, 360p, or **`🚫 No Video (Audio Only)`**.
   - **Right Column (Audio)**: Choose 320 kbps, 256 kbps, 192 kbps, 128 kbps, 64 kbps, or **`🔇 No Audio (Video Only)`**.
@@ -59,6 +64,11 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 - **Dynamic Estimations**: Live calculation of total selected tracks, combined runtime, and estimated download size.
 
 ### 📥 Multi-Worker Queue & Download Manager (`Ctrl+J`)
+
+<p align="center">
+  <img src="assets/download_screen.svg" alt="Download Queue Manager" width="100%"/>
+</p>
+
 - **Concurrent Workers**: Download multiple tasks simultaneously in the background.
 - **Live Statistics**: Real-time download speed, percentage, transferred bytes, and estimated completion time (ETA).
 - **Task Controls**: Pause (`P`), Resume / Retry (`R`), Edit Format (`E`), Cancel (`C`), Delete (`D`), and Clear Completed (`X`).
@@ -88,7 +98,12 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 - **Embed Chapter Markers & Splitting**: Embed chapter markers directly into containers for instant chapter navigation in players (VLC, mpv, etc.), or split long videos into separate per-chapter tracks (`--split-chapters`).
 - **SponsorBlock Integration**: Automatically detect and remove community-reported sponsored segments, self-promotions, intros, and outros from media files.
 
-### 🎨 17 Handcrafted Themes
+### 🎨 17 Handcrafted Themes & Settings (`Ctrl+O`)
+
+<p align="center">
+  <img src="assets/settings_screen.svg" alt="Settings & Appearance Configuration" width="100%"/>
+</p>
+
 Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
 - **Dark Profiles**: `Shadcn Zinc`, `Tokyo Night`, `Catppuccin Mocha`, `Dracula Pro`, `Nord Polar`, `Gruvbox Dark`, `Monokai Pro`, `Cyberpunk Neon`, `Midnight Amethyst`, `Matrix Emerald`, `Rosé Pine`, `Solarized Dark`, `Synthwave '84`, `OLED Jet Black`.
 - **Light Profiles**: `Catppuccin Latte`, `Solarized Light`, `Titanium Light`.

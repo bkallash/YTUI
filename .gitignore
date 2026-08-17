@@ -8,7 +8,8 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
+dist/*
+!dist/yt-dlp-tui.exe
 downloads/
 eggs/
 .eggs/

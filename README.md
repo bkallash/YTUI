@@ -9,23 +9,13 @@
 [![Rich](https://img.shields.io/badge/styled%20with-Rich-FF4B4B.svg?style=flat)](https://rich.readthedocs.io/)
 [![yt-dlp](https://img.shields.io/badge/powered%20by-yt--dlp-FF0000.svg?style=flat&logo=youtube&logoColor=white)](https://github.com/yt-dlp/yt-dlp)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=flat)](https://opensource.org/licenses/MIT)
-[![Standalone Executable](https://img.shields.io/badge/Windows-Standalone%20.exe-22c55e.svg?style=flat&logo=windows&logoColor=white)](dist/yt-dlp-tui.exe)
 [![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux%20%7C%20macOS-lightgrey.svg?style=flat)]()
 
+<br/>
+
+[![Download Standalone Executable](https://img.shields.io/badge/⬇️%20DOWNLOAD-yt--dlp--tui.exe%20(Windows%20x64)-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bkallash/YTUI/raw/main/dist/yt-dlp-tui.exe)
+
 </div>
-
----
-
-## ⚡ Quick Download & Run (No Python Required)
-
-Want to use the app immediately on Windows without setting up Python, Git, or virtual environments?
-
-### 📥 1-Step Download & Launch
-1. **Download the standalone binary**:
-   - Grab **[`yt-dlp-tui.exe`](dist/yt-dlp-tui.exe)** from the [`dist/`](dist/) folder (or GitHub Releases).
-2. **Launch & Auto-Setup**:
-   - Double-click **`yt-dlp-tui.exe`**.
-   - On first launch, the app automatically detects if FFmpeg is installed and offers a **1-click automatic download & install** for full 4K / MP3 support!
 
 ---
 
@@ -75,6 +65,12 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 - **Real-Time Logs**: Press `L` to toggle the live yt-dlp stdout log stream for deep diagnostics.
 - **Quick File Launch**: Open downloaded files in your default media player (`O` / `Enter`) or reveal the destination directory in File Explorer (`F`).
 
+### 📚 Download History & Library (`Ctrl+Y`)
+- **Persistent Media Archive**: Automatically logs every completed download with title, format, file size, download timestamp, and destination path.
+- **Instant Search & Filter**: Press `/` or `Ctrl+F` for real-time, case-insensitive searching across your entire library.
+- **1-Click Management**: Launch files in your default media player (`Enter` / `O`), reveal in File Explorer (`F`), re-download with updated formats (`R`), or delete entries (`D`).
+- **Atomic Persistence**: Thread-safe, corruption-resistant storage keeping your library safe across app restarts.
+
 ### 🛡️ Network Resiliency & Smart Auto-Resume
 - **Byte-Offset Resumption**: Partial `.part` files are automatically resumed from where they stopped (`continuedl: True`).
 - **Connection Drop Recovery**: Automatic exponential retry backoff (up to 10 retries by default) for unstable networks.
@@ -108,15 +104,11 @@ Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
 
 ### Option A: Pre-built Executable (Fastest — No Python Required)
 
-1. **Download**: Download [`yt-dlp-tui.exe`](dist/yt-dlp-tui.exe) from the [`dist/`](dist/) folder or GitHub Releases.
-2. **FFmpeg (Optional but Recommended)**:
-   - To enable 1080p/4K/8K stream merging, audio extraction, and SponsorBlock cutting:
-     ```cmd
-     winget install Gyan.FFmpeg
-     ```
-     *(Or download `ffmpeg.exe` and `ffprobe.exe` and place them next to `yt-dlp-tui.exe`)*.
-3. **Launch**:
-   - Double-click `yt-dlp-tui.exe` to run immediately.
+[![Download yt-dlp-tui.exe](https://img.shields.io/badge/⬇️_Download-yt--dlp--tui.exe-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bkallash/YTUI/raw/main/dist/yt-dlp-tui.exe)
+
+1. **Download**: Click the download button above or get [`dist/yt-dlp-tui.exe`](dist/yt-dlp-tui.exe).
+2. **FFmpeg Setup**: On first launch, the app will automatically prompt to download and configure FFmpeg in 1 click if not found on your system.
+3. **Launch**: Double-click `yt-dlp-tui.exe` to run immediately.
 
 ---
 
@@ -132,7 +124,7 @@ Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
 #### 2. Clone & Install Dependencies
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/YTUI.git
+git clone https://github.com/bkallash/YTUI.git
 cd YTUI
 
 # Create and activate a virtual environment (recommended)

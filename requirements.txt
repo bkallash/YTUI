@@ -1,0 +1,9 @@
+textual>=0.80.0
+rich>=13.0.0
+yt-dlp>=2024.0.0
+mutagen>=1.47.0
+arabic-reshaper>=3.0.0
+python-bidi>=0.4.2
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+pyinstaller>=6.0.0

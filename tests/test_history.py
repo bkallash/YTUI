@@ -130,12 +130,18 @@ def test_history_open_folder_windows(monkeypatch, tmp_path):
 
     assert HistoryManager.open_folder(str(test_file)) is True
     assert len(recorded_calls) == 1
-    assert recorded_calls[0] == ["explorer", f"/select,{test_file.resolve()}"]
+    assert recorded_calls[0] == f'explorer /select,"{test_file.resolve()}"'
 
     # Test non-existing file (opens target_dir)
     non_existent = tmp_path / "not_there.mp4"
     assert HistoryManager.open_folder(str(non_existent)) is True
     assert len(recorded_calls) == 2
-    assert recorded_calls[1] == ["explorer", str(tmp_path.resolve())]
+    assert recorded_calls[1] == f'explorer "{tmp_path.resolve()}"'
+
+    # Test directory path
+    custom_dir = tmp_path / "my_downloads"
+    assert HistoryManager.open_folder(str(custom_dir)) is True
+    assert len(recorded_calls) == 3
+    assert recorded_calls[2] == f'explorer "{custom_dir.resolve()}"'
 
 

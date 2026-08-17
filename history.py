@@ -128,16 +128,30 @@ class HistoryManager:
     @staticmethod
     def open_folder(filepath: str) -> bool:
         """Open the directory containing the file in file explorer."""
-        path = Path(filepath)
-        target_dir = path.parent if path.is_file() or not path.exists() else path
+        if not filepath:
+            return False
+        path = Path(filepath).expanduser()
+        if path.is_file():
+            target_dir = path.parent
+        elif path.is_dir():
+            target_dir = path
+        elif path.suffix:
+            target_dir = path.parent
+        else:
+            target_dir = path
+
         try:
+            target_dir.mkdir(parents=True, exist_ok=True)
             if sys.platform == "win32":
                 if path.exists() and path.is_file():
-                    subprocess.Popen(["explorer", f"/select,{path.resolve()}"])
+                    subprocess.Popen(f'explorer /select,"{path.resolve()}"')
                 else:
-                    subprocess.Popen(["explorer", str(target_dir.resolve())])
+                    subprocess.Popen(f'explorer "{target_dir.resolve()}"')
             elif sys.platform == "darwin":
-                subprocess.Popen(["open", "-R", str(path) if path.exists() else str(target_dir)])
+                if path.exists() and path.is_file():
+                    subprocess.Popen(["open", "-R", str(path)])
+                else:
+                    subprocess.Popen(["open", str(target_dir)])
             else:
                 subprocess.Popen(["xdg-open", str(target_dir)])
             return True

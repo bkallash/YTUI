@@ -1,0 +1,81 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ytui-media"
+version = "0.1.1"
+description = "A sleek, keyboard-driven Terminal User Interface (TUI) client and download manager for yt-dlp"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+authors = [
+    { name = "bkallash" }
+]
+keywords = [
+    "yt-dlp",
+    "tui",
+    "terminal",
+    "textual",
+    "youtube",
+    "video-downloader",
+    "media-downloader",
+    "rich"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Multimedia :: Video",
+    "Topic :: Terminals",
+    "Topic :: Utilities"
+]
+dependencies = [
+    "textual>=0.80.0",
+    "rich>=13.0.0",
+    "yt-dlp>=2024.0.0",
+    "mutagen>=1.47.0",
+    "arabic-reshaper>=3.0.0",
+    "python-bidi>=0.4.2"
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=0.23.0",
+    "build>=1.0.0",
+    "twine>=5.0.0",
+    "pyinstaller>=6.0.0"
+]
+
+[project.urls]
+Homepage = "https://github.com/bkallash/YTUI"
+Repository = "https://github.com/bkallash/YTUI"
+Issues = "https://github.com/bkallash/YTUI/issues"
+
+[project.scripts]
+ytui = "app:main"
+yt-dlp-tui = "app:main"
+
+[tool.setuptools]
+py-modules = [
+    "app",
+    "config",
+    "ffmpeg_utils",
+    "history",
+    "manager",
+    "rtl_utils",
+    "themes",
+    "ytdlp_engine"
+]
+packages = [
+    "screens",
+    "widgets"
+]

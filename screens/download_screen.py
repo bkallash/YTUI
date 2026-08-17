@@ -568,14 +568,20 @@ class DownloadScreen(Screen):
                 self.notify("No output file path recorded yet", severity="warning")
 
     def action_open_folder(self) -> None:
+        target = None
         if self.selected_task_id:
             task = self.manager.get_task(self.selected_task_id)
-            target = task.output_filepath if (task and task.output_filepath) else self.config.download_dir
-            success = HistoryManager.open_folder(target)
-            if success:
-                self.notify("Opened containing folder in Explorer", severity="information")
-            else:
-                self.notify("Could not open destination folder", severity="error")
+            if task and task.output_filepath:
+                target = task.output_filepath
+        if not target:
+            cfg = getattr(self.manager, "config", None) or getattr(self.app, "config", None) or self.config
+            target = getattr(cfg, "download_dir", None) or self.config.download_dir
+
+        success = HistoryManager.open_folder(target)
+        if success:
+            self.notify("Opened containing folder in Explorer", severity="information")
+        else:
+            self.notify("Could not open destination folder", severity="error")
 
     def action_refresh_table(self) -> None:
         self.refresh_table()

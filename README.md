@@ -4,6 +4,7 @@
 
 **A sleek, keyboard-driven, high-density Terminal User Interface (TUI) client and download manager for [yt-dlp](https://github.com/yt-dlp/yt-dlp).**
 
+[![PyPI Version](https://img.shields.io/pypi/v/ytui-media.svg?color=blue&style=flat&logo=pypi&logoColor=white)](https://pypi.org/project/ytui-media/)
 [![Python Version](https://img.shields.io/badge/python-3.10+-3776AB.svg?style=flat&logo=python&logoColor=white)](https://www.python.org/)
 [![Textual](https://img.shields.io/badge/built%20with-Textual-00D2FF.svg?style=flat)](https://textual.textualize.io/)
 [![Rich](https://img.shields.io/badge/styled%20with-Rich-FF4B4B.svg?style=flat)](https://rich.readthedocs.io/)
@@ -13,7 +14,9 @@
 
 <br/>
 
-[![Download Standalone Executable](https://img.shields.io/badge/⬇️%20DOWNLOAD-yt--dlp--tui.exe%20(Windows%20x64)-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bkallash/YTUI/raw/main/dist/yt-dlp-tui.exe)
+[![Install with pipx](https://img.shields.io/badge/📦_INSTALL-pipx_install_ytui--media-00D2FF?style=for-the-badge&logo=pypi&logoColor=white)](https://pypi.org/project/ytui-media/)
+&nbsp;
+[![Download Standalone Executable](https://img.shields.io/badge/⬇️_DOWNLOAD-yt--dlp--tui.exe_(Windows)-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bkallash/YTUI/raw/main/dist/yt-dlp-tui.exe)
 
 </div>
 
@@ -45,7 +48,7 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 ### 🎛️ Dual-Column Side-by-Side Stream Matrix
 
 <p align="center">
-  <img src="assets/format_screen.svg" alt="Format Selection Matrix" width="100%"/>
+  <img src="https://raw.githubusercontent.com/bkallash/YTUI/main/assets/format_screen.svg" alt="Format Selection Matrix" width="100%"/>
 </p>
 
 - **Independent Stream Pairing**:
@@ -66,7 +69,7 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 ### 📥 Multi-Worker Queue & Download Manager (`Ctrl+J`)
 
 <p align="center">
-  <img src="assets/download_screen.svg" alt="Download Queue Manager" width="100%"/>
+  <img src="https://raw.githubusercontent.com/bkallash/YTUI/main/assets/download_screen.svg" alt="Download Queue Manager" width="100%"/>
 </p>
 
 - **Concurrent Workers**: Download multiple tasks simultaneously in the background.
@@ -101,7 +104,7 @@ No more memorizing complex CLI flags or wrestling with stream formats:
 ### 🎨 17 Handcrafted Themes & Settings (`Ctrl+O`)
 
 <p align="center">
-  <img src="assets/settings_screen.svg" alt="Settings & Appearance Configuration" width="100%"/>
+  <img src="https://raw.githubusercontent.com/bkallash/YTUI/main/assets/settings_screen.svg" alt="Settings & Appearance Configuration" width="100%"/>
 </p>
 
 Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
@@ -117,7 +120,28 @@ Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
 
 ## 🚀 Setup & Installation
 
-### Option A: Pre-built Executable (Fastest — No Python Required)
+### Option A: Install via PyPI / pipx (Recommended for Terminal Users)
+
+You can install and run YTUI in an isolated terminal environment with `pipx` or standard `pip`:
+
+```bash
+# Using pipx (recommended)
+pipx install ytui-media
+
+# Or using pip
+pip install ytui-media
+```
+
+Then simply launch from any directory:
+```bash
+ytui
+# or
+yt-dlp-tui
+```
+
+---
+
+### Option B: Standalone Executable (No Python Required)
 
 [![Download yt-dlp-tui.exe](https://img.shields.io/badge/⬇️_Download-yt--dlp--tui.exe-2ea44f?style=for-the-badge&logo=windows&logoColor=white)](https://github.com/bkallash/YTUI/raw/main/dist/yt-dlp-tui.exe)
 
@@ -127,7 +151,7 @@ Switch between modern terminal aesthetics via **`Ctrl+O`** → **Appearance**:
 
 ---
 
-### Option B: Run from Source (Python 3.10+)
+### Option C: Run from Source (Python 3.10+)
 
 #### 1. Prerequisites
 - **Python 3.10 or higher**: Verify with `python --version`.

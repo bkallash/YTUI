@@ -9,13 +9,13 @@ import uuid
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yt_dlp
 
 from config import AppConfig, get_config_dir
 from history import HistoryItem, HistoryManager
-from ytdlp_engine import YtDlpEngine, format_bytes
+from ytdlp_engine import YOUTUBE_CLIENT_FALLBACKS, YtDlpEngine, format_bytes
 
 
 class DownloadStatus(str, Enum):
@@ -525,37 +525,54 @@ class DownloadManager:
             task.add_log(f"Starting download: {task.url}")
             extract_res = None
             active_ydl = None
-            try:
-                with yt_dlp.YoutubeDL(opts) as ydl:
-                    active_ydl = ydl
-                    extract_res = ydl.extract_info(task.url, download=True)
-            except Exception as e:
-                err_str = str(e)
-                # If failed due to locked browser cookies, retry download once without cookies
-                if ("cookiesfrombrowser" in opts or "cookiefile" in opts) and not task.is_cancelled and not task.is_paused:
-                    task.add_log("Notice: Browser cookies locked or unavailable. Retrying download without cookies...")
-                    opts_no_cookies = dict(opts)
-                    opts_no_cookies.pop("cookiesfrombrowser", None)
-                    opts_no_cookies.pop("cookiefile", None)
-                    with yt_dlp.YoutubeDL(opts_no_cookies) as ydl:
+
+            def _try_download(current_opts: Dict[str, Any]) -> Tuple[Optional[Any], Optional[Any], Optional[Exception]]:
+                nonlocal active_ydl
+                logger.errors.clear()
+                logger.has_fatal_error = False
+                try:
+                    with yt_dlp.YoutubeDL(current_opts) as ydl:
                         active_ydl = ydl
-                        extract_res = ydl.extract_info(task.url, download=True)
-                elif ("403" in err_str or "forbidden" in err_str.lower()) and not task.is_cancelled and not task.is_paused:
-                    # Auto retry once with web_embedded player client fallback
+                        res = ydl.extract_info(task.url, download=True)
+                        if any(k in " ".join(logger.errors).lower() for k in ["403", "forbidden"]):
+                            return res, active_ydl, yt_dlp.utils.DownloadError("Stream returned HTTP 403 Forbidden")
+                        return res, active_ydl, None
+                except Exception as ex:
+                    return None, active_ydl, ex
+
+            extract_res, active_ydl, download_err = _try_download(opts)
+
+            # If failed due to locked browser cookies, retry download once without cookies
+            if download_err and ("cookiesfrombrowser" in opts or "cookiefile" in opts) and not task.is_cancelled and not task.is_paused:
+                task.add_log("Notice: Browser cookies locked or unavailable. Retrying download without cookies...")
+                opts_no_cookies = dict(opts)
+                opts_no_cookies.pop("cookiesfrombrowser", None)
+                opts_no_cookies.pop("cookiefile", None)
+                extract_res, active_ydl, download_err = _try_download(opts_no_cookies)
+
+            # If 403 Forbidden occurred, cycle through alternative YouTube player clients
+            if download_err and not task.is_cancelled and not task.is_paused:
+                err_str = str(download_err).lower()
+                is_403 = any(k in err_str for k in ["403", "forbidden"]) or any(k in " ".join(logger.errors).lower() for k in ["403", "forbidden"])
+                if is_403:
                     failing_label = get_current_failing_format_label()
-                    task.add_log(f"Notice: HTTP 403 Forbidden on {failing_label}. Retrying with web_embedded client...")
-                    opts_fallback = dict(opts)
-                    opts_fallback["extractor_args"] = {
-                        "youtube": {
-                            "player_client": ["web_embedded", "android", "default"],
-                            "player_skip": ["configs"],
+                    for client_set in YtDlpEngine.YOUTUBE_CLIENT_FALLBACKS[1:]:
+                        if task.is_cancelled or task.is_paused:
+                            break
+                        client_desc = ", ".join(client_set)
+                        task.add_log(f"Notice: HTTP 403 Forbidden on {failing_label}. Retrying with {client_desc} client fallback...")
+                        opts_fallback = dict(opts)
+                        opts_fallback["extractor_args"] = {
+                            "youtube": {
+                                "player_client": client_set,
+                            }
                         }
-                    }
-                    with yt_dlp.YoutubeDL(opts_fallback) as ydl:
-                        active_ydl = ydl
-                        extract_res = ydl.extract_info(task.url, download=True)
-                else:
-                    raise e
+                        extract_res, active_ydl, download_err = _try_download(opts_fallback)
+                        if not download_err and not logger.has_fatal_error:
+                            break
+
+            if download_err and not task.is_cancelled and not task.is_paused:
+                raise download_err
 
             if extract_res and active_ydl:
                 filename = active_ydl.prepare_filename(extract_res)

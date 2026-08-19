@@ -13,6 +13,15 @@ from ffmpeg_utils import ensure_ffmpeg_in_path, find_ffmpeg
 # Initialize FFmpeg in PATH if available
 ensure_ffmpeg_in_path()
 
+# Verified YouTube player client fallback chains to avoid HTTP 403 Forbidden
+YOUTUBE_CLIENT_FALLBACKS: List[List[str]] = [
+    ["web_embedded", "android", "mweb"],
+    ["android", "mweb"],
+    ["tv_simply", "tv_downgraded", "android"],
+    ["mweb", "android"],
+    ["web", "android"],
+]
+
 
 def format_bytes(size: Optional[int]) -> str:
     """Format bytes into human-readable string."""
@@ -249,6 +258,8 @@ def _subtitle_language_patterns(raw_languages: str, include_auto_generated: bool
 class YtDlpEngine:
     """High-level abstraction over yt-dlp API."""
 
+    YOUTUBE_CLIENT_FALLBACKS = YOUTUBE_CLIENT_FALLBACKS
+
     @staticmethod
     def search(query: str, max_results: int = 15, config: Optional[AppConfig] = None) -> List[SearchResultItem]:
         """Perform a YouTube keyword search using ytsearch."""
@@ -449,8 +460,7 @@ class YtDlpEngine:
             "remote_components": ["ejs:github"],
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web_embedded", "default", "mweb"],
-                    "player_skip": ["configs"],
+                    "player_client": YOUTUBE_CLIENT_FALLBACKS[0],
                 }
             },
         }
@@ -465,10 +475,13 @@ class YtDlpEngine:
             if config.geo_bypass:
                 ydl_opts["geo_bypass"] = True
 
+        info = None
+        last_error: Optional[Exception] = None
         try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 info = ydl.extract_info(url, download=False)
         except Exception as e:
+            last_error = e
             # If cookies failed (e.g. Chrome/Edge is open and locks SQLite database on Windows), retry without cookies
             if "cookiesfrombrowser" in ydl_opts or "cookiefile" in ydl_opts:
                 opts_no_cookies = dict(ydl_opts)
@@ -477,12 +490,33 @@ class YtDlpEngine:
                 try:
                     with yt_dlp.YoutubeDL(opts_no_cookies) as ydl:
                         info = ydl.extract_info(url, download=False)
+                        last_error = None
                 except Exception as retry_err:
-                    raise retry_err
-            else:
-                raise e
+                    last_error = retry_err
+
+        # If info extraction failed or returned 403 / forbidden / unavailable, cycle through client fallbacks
+        if not info and last_error:
+            err_str = str(last_error).lower()
+            if any(k in err_str for k in ["403", "forbidden", "unavailable", "sign in", "requested format is not available"]):
+                for client_set in YOUTUBE_CLIENT_FALLBACKS[1:]:
+                    opts_fallback = dict(ydl_opts)
+                    opts_fallback["extractor_args"] = {
+                        "youtube": {
+                            "player_client": client_set,
+                        }
+                    }
+                    try:
+                        with yt_dlp.YoutubeDL(opts_fallback) as ydl:
+                            info = ydl.extract_info(url, download=False)
+                            if info:
+                                last_error = None
+                                break
+                    except Exception as fallback_err:
+                        last_error = fallback_err
 
         if not info:
+            if last_error:
+                raise last_error
             raise ValueError("Could not extract media metadata from URL")
 
         # Check if it's a playlist
@@ -992,8 +1026,7 @@ class YtDlpEngine:
             "remote_components": ["ejs:github"],
             "extractor_args": {
                 "youtube": {
-                    "player_client": ["web_embedded", "default", "mweb"],
-                    "player_skip": ["configs"],
+                    "player_client": YOUTUBE_CLIENT_FALLBACKS[0],
                 }
             },
         }

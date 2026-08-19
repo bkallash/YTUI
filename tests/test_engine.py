@@ -407,3 +407,38 @@ def test_extract_audio_quality_and_containers():
     assert extract_audio_quality_from_option(a_mp3) == "320"
     assert extract_audio_quality_from_option(None) == "256"
 
+
+def test_extract_info_403_fallback_cycles_clients():
+    """Verify that YtDlpEngine.extract_info cycles client configurations when hitting 403."""
+    import yt_dlp
+    from unittest.mock import patch
+
+    calls = 0
+    clients_seen = []
+
+    def mock_extract(self, url, download=False):
+        nonlocal calls
+        calls += 1
+        client = self.params.get("extractor_args", {}).get("youtube", {}).get("player_client", [])
+        clients_seen.append(client)
+        if calls == 1:
+            raise yt_dlp.utils.DownloadError("HTTP Error 403: Forbidden")
+        return {
+            "id": "1DhZkZ_q4Qg",
+            "title": "Fallback Success",
+            "uploader": "Test Channel",
+            "duration": 120,
+            "formats": [
+                {"format_id": "18", "vcodec": "avc1", "acodec": "mp4a", "height": 360, "ext": "mp4"}
+            ],
+        }
+
+    with patch.object(yt_dlp.YoutubeDL, "extract_info", mock_extract):
+        res = YtDlpEngine.extract_info("https://www.youtube.com/watch?v=1DhZkZ_q4Qg")
+
+    assert res.title == "Fallback Success"
+    assert calls == 2
+    assert len(clients_seen) >= 2
+    assert clients_seen[0] == YtDlpEngine.YOUTUBE_CLIENT_FALLBACKS[0]
+    assert clients_seen[1] == YtDlpEngine.YOUTUBE_CLIENT_FALLBACKS[1]
+

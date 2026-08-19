@@ -194,6 +194,62 @@ def test_download_validation_and_format_attribution(tmp_path, monkeypatch):
     manager.shutdown()
 
 
+def test_client_fallback_on_403_forbidden_succeeds(tmp_path, monkeypatch):
+    """Test that when initial client hits 403 Forbidden, fallback client is tried and succeeds."""
+    import yt_dlp
+    storage = tmp_path / "hist.json"
+    queue_file = tmp_path / "queue.json"
+    config = AppConfig(download_dir=str(tmp_path))
+    history = HistoryManager(storage_path=storage)
+    manager = DownloadManager(config=config, history=history, queue_path=queue_file, auto_start_worker=False)
+
+    test_file = tmp_path / "Test Success Video [test].mp4"
+    test_file.write_bytes(b"dummy video data 12345")
+
+    task = DownloadTask(
+        id="fallback-task-1",
+        url="https://youtube.com/watch?v=test",
+        title="Test Success Video",
+        video_format="18",
+        video_format_label="360p (MP4)",
+        audio_format="none",
+        audio_format_label="",
+        container="mp4",
+        status=DownloadStatus.QUEUED,
+        output_filepath=str(test_file),
+    )
+    manager.tasks = [task]
+
+    from tests.conftest import ORIGINAL_EXECUTE_DOWNLOAD
+    monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
+
+    from unittest.mock import MagicMock, patch
+    import manager as manager_module
+
+    attempts = 0
+    clients_tried = []
+
+    def mock_extract_info(url, download=True):
+        nonlocal attempts
+        attempts += 1
+        # Extract the player client from current active YoutubeDL opts
+        if attempts == 1:
+            raise yt_dlp.utils.DownloadError("unable to download video data: HTTP Error 403: Forbidden")
+        return {"id": "test", "title": "Test Success Video", "ext": "mp4", "_filename": str(test_file)}
+
+    with patch.object(manager_module.yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_info):
+        with patch.object(manager_module.yt_dlp.YoutubeDL, "prepare_filename", return_value=str(test_file)):
+            manager._execute_download(task)
+
+    assert attempts >= 2
+    assert task.status == DownloadStatus.COMPLETED
+    assert task.progress_percent == 100.0
+    assert any("403 Forbidden" in log and "Retrying with" in log for log in task.logs)
+    assert len(history.items) == 1
+
+    manager.shutdown()
+
+
 def test_atomic_persistence(tmp_path):
     queue_file = tmp_path / "queue.json"
     temp_file = queue_file.with_suffix(".tmp")

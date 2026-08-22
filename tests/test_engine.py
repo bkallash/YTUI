@@ -35,12 +35,17 @@ def test_parse_formats():
     assert any(opt.format_id == "none" and opt.format_type == "video" for opt in video_opts)
     assert any(opt.format_id == "none" and opt.format_type == "audio" for opt in audio_opts)
 
-    # Check parsed video formats
+    # Check parsed video formats (137, 136)
     assert any(opt.height == 1080 for opt in video_opts)
     assert any(opt.height == 720 for opt in video_opts)
 
+    # Pure audio streams (140, 251) must NOT leak into the video options
+    assert not any(opt.format_id in ("140", "251") for opt in video_opts)
+
     # Check parsed audio formats
     assert any("160 kbps" in opt.label or "128 kbps" in opt.label for opt in audio_opts)
+    assert any(opt.format_id == "251" for opt in audio_opts)
+    assert any(opt.format_id == "140" for opt in audio_opts)
 
 
 def test_build_download_options_resilience_and_settings():
@@ -143,7 +148,7 @@ def test_build_download_options_audio_only():
         audio_quality="320",
     )
 
-    assert opts["format"] == "140"
+    assert opts["format"] == "140/bestaudio/best"
     assert "merge_output_format" not in opts
     pp_list = opts.get("postprocessors", [])
     extract_pp = next((pp for pp in pp_list if pp.get("key") == "FFmpegExtractAudio"), None)
@@ -207,6 +212,12 @@ def test_resolve_output_filepath(tmp_path):
     # When stem with different extension exists
     dummy_orig = tmp_path / "song.webm"
     assert YtDlpEngine.resolve_output_filepath(str(dummy_orig), container="mp3", is_audio_only=True) == str(f)
+
+    # When filename contains multiple dots (e.g. Artist - Title (feat. Drake) v1.0.mp3)
+    f_dotted = tmp_path / "Artist - Song (feat. Drake) v1.0.mp3"
+    f_dotted.write_text("dummy")
+    dummy_dotted_orig = tmp_path / "Artist - Song (feat. Drake) v1.0.webm"
+    assert YtDlpEngine.resolve_output_filepath(str(dummy_dotted_orig), container="mp3", is_audio_only=True) == str(f_dotted)
 
 
 def test_shorts_detection_and_urls():
@@ -441,4 +452,25 @@ def test_extract_info_403_fallback_cycles_clients():
     assert len(clients_seen) >= 2
     assert clients_seen[0] == YtDlpEngine.YOUTUBE_CLIENT_FALLBACKS[0]
     assert clients_seen[1] == YtDlpEngine.YOUTUBE_CLIENT_FALLBACKS[1]
+
+
+def test_parse_formats_multi_language_and_surround_audio():
+    formats = [
+        {"format_id": "137", "vcodec": "avc1.640028", "acodec": "none", "height": 1080, "ext": "mp4"},
+        {"format_id": "251-en", "vcodec": "none", "acodec": "opus", "abr": 160, "ext": "webm", "language": "en"},
+        {"format_id": "251-es", "vcodec": "none", "acodec": "opus", "abr": 160, "ext": "webm", "language": "es"},
+        {"format_id": "258", "vcodec": "none", "acodec": "mp4a.40.2", "abr": 384, "ext": "m4a", "audio_channels": 6},
+    ]
+
+    v_opts, a_opts = YtDlpEngine._parse_formats(formats)
+
+    # Video column only has 1080p, no audio formats
+    assert any(opt.format_id == "137" for opt in v_opts)
+    assert not any(opt.format_id in ["251-en", "251-es", "258"] for opt in v_opts)
+
+    # Audio column has surround and both language tracks
+    assert any(opt.format_id == "258" and "5.1" in opt.label for opt in a_opts)
+    assert any(opt.format_id == "251-en" and "[EN]" in opt.label for opt in a_opts)
+    assert any(opt.format_id == "251-es" and "[ES]" in opt.label for opt in a_opts)
+
 

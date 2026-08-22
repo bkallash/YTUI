@@ -138,14 +138,20 @@ class TaskLogger:
                 err_text = err_text.split(":", 1)[1].strip()
 
             err_lower = err_text.lower()
-            # Non-fatal cookie copy/database warnings should not fail the entire stream validation if stream succeeded
-            is_cookie_warning = any(c in err_lower for c in [
+            # Non-fatal warnings and postprocessor notices should not fail validation if the stream succeeded
+            is_non_fatal = any(c in err_lower for c in [
                 "could not copy chrome cookie", "could not copy", "cookie database",
-                "failed to decrypt with dpapi", "failed to load cookies", "cookie database is locked"
+                "failed to decrypt with dpapi", "failed to load cookies", "cookie database is locked",
+                "sponsorblock", "thumbnail", "mutagen", "atomicparsley", "metadata",
+                "retrying fragment", "retrying (", "unable to download video subtitles",
+                "unable to download subtitles", "postprocessing",
             ])
-            if not is_cookie_warning:
+            if not is_non_fatal:
                 self.errors.append(err_text)
-                if any(k in err_lower for k in ["http error", "403", "forbidden", "unable to download", "fatal", "download error"]):
+                if any(k in err_lower for k in [
+                    "http error", "403", "forbidden", "unable to download", "fatal",
+                    "download error", "requested format is not available",
+                ]):
                     self.has_fatal_error = True
 
 
@@ -305,6 +311,8 @@ class DownloadManager:
                     break
         if updated:
             self._save_tasks()
+            if self.auto_start_worker:
+                self._start_worker()
             self._notify()
 
     def cancel_task(self, task_id: str) -> None:
@@ -335,6 +343,8 @@ class DownloadManager:
                     break
         if updated:
             self._save_tasks()
+            if self.auto_start_worker:
+                self._start_worker()
             self._notify()
 
     def delete_task(self, task_id: str) -> None:
@@ -576,51 +586,49 @@ class DownloadManager:
 
             if extract_res and active_ydl:
                 filename = active_ydl.prepare_filename(extract_res)
-                task.output_filepath = YtDlpEngine.resolve_output_filepath(
+                resolved = YtDlpEngine.resolve_output_filepath(
                     filename,
                     container=task.container,
                     is_audio_only=is_audio_only,
                 )
+                if resolved and Path(resolved).exists() and Path(resolved).is_file():
+                    task.output_filepath = resolved
+                elif not (task.output_filepath and Path(task.output_filepath).exists() and Path(task.output_filepath).is_file()):
+                    task.output_filepath = resolved
 
             if task.is_cancelled:
                 task.status = DownloadStatus.CANCELLED
             elif task.is_paused:
                 task.status = DownloadStatus.PAUSED
             else:
-                # Strict multi-layer validation before marking COMPLETED
+                # Multi-layer validation before marking COMPLETED
                 download_valid = True
                 incomplete_reason = ""
 
-                # Verification 1: Check if logger recorded fatal stream error
-                if logger.has_fatal_error or logger.errors:
-                    raw_err = logger.errors[-1] if logger.errors else "Stream error"
-                    download_valid = False
-                    incomplete_reason = f"{get_current_failing_format_label()} failed: {raw_err}"
+                out_path = Path(task.output_filepath) if task.output_filepath else None
+                file_exists_and_valid = bool(out_path and out_path.exists() and out_path.is_file() and out_path.stat().st_size > 0)
 
-                # Verification 2: Multi-stream completion (both streams must finish)
-                if download_valid and is_multi_stream and stream_state["finished_count"] < stream_state["expected_streams"]:
+                # Verification 1: Multi-stream completion (both streams must finish)
+                if is_multi_stream and stream_state["finished_count"] < stream_state["expected_streams"]:
                     download_valid = False
                     failing_fmt = get_current_failing_format_label()
                     incomplete_reason = f"{failing_fmt} download incomplete (finished {stream_state['finished_count']}/{stream_state['expected_streams']} streams)"
 
-                # Verification 3: Output file must exist on disk and have non-zero size
-                out_path = Path(task.output_filepath) if task.output_filepath else None
-                if download_valid:
-                    if not out_path or not out_path.exists() or not out_path.is_file() or out_path.stat().st_size == 0:
-                        download_valid = False
-                        failing_fmt = get_current_failing_format_label()
+                # Verification 2: Output file must exist on disk and have non-zero size
+                elif not file_exists_and_valid:
+                    download_valid = False
+                    failing_fmt = get_current_failing_format_label()
+                    if logger.has_fatal_error or logger.errors:
+                        raw_err = logger.errors[-1] if logger.errors else "Stream error"
+                        incomplete_reason = f"{failing_fmt} failed: {raw_err}"
+                    else:
                         incomplete_reason = f"{failing_fmt} output file was not created or is empty"
 
-                # Verification 4: Downloaded bytes vs total bytes
-                if download_valid and task.total_bytes > 0 and task.downloaded_bytes > 0:
-                    completion_ratio = task.downloaded_bytes / task.total_bytes
-                    if completion_ratio < 0.95:
-                        download_valid = False
-                        pct = completion_ratio * 100
-                        incomplete_reason = (
-                            f"{get_current_failing_format_label()}: only {format_bytes(task.downloaded_bytes)} of "
-                            f"{format_bytes(task.total_bytes)} downloaded ({pct:.1f}%)"
-                        )
+                # Verification 3: Fatal stream error check
+                elif logger.has_fatal_error and not file_exists_and_valid:
+                    raw_err = logger.errors[-1] if logger.errors else "Stream error"
+                    download_valid = False
+                    incomplete_reason = f"{get_current_failing_format_label()} failed: {raw_err}"
 
                 if download_valid:
                     task.status = DownloadStatus.COMPLETED

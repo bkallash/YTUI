@@ -402,4 +402,76 @@ def test_progress_hook_event_loop_throttling(tmp_path, monkeypatch):
     manager.shutdown()
 
 
+def test_audio_download_validation_succeeds_with_nonfatal_logger_messages(tmp_path, monkeypatch):
+    """Ensure non-fatal logger messages (SponsorBlock, mutagen, thumbnail) do not fail a successful audio download."""
+    import yt_dlp
+    storage = tmp_path / "hist.json"
+    queue_file = tmp_path / "queue.json"
+    config = AppConfig(download_dir=str(tmp_path))
+    history = HistoryManager(storage_path=storage)
+    manager = DownloadManager(config=config, history=history, queue_path=queue_file, auto_start_worker=False)
+
+    audio_file = tmp_path / "Song [abc123].mp3"
+    audio_file.write_bytes(b"dummy mp3 data 123456789")
+
+    task = DownloadTask(
+        id="audio-success-1",
+        url="https://youtube.com/watch?v=abc123",
+        title="Song",
+        video_format="none",
+        video_format_label="",
+        audio_format="251",
+        audio_format_label="160 kbps (opus)",
+        container="mp3",
+        status=DownloadStatus.QUEUED,
+        output_filepath=str(audio_file),
+    )
+    manager.tasks = [task]
+
+    from tests.conftest import ORIGINAL_EXECUTE_DOWNLOAD
+    monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
+
+    from unittest.mock import patch
+    import manager as manager_module
+
+    def mock_extract_with_warnings(url, download=True):
+        # Emulate non-fatal notices logged during download/postprocessing
+        return {"id": "abc123", "title": "Song", "ext": "mp3", "_filename": str(audio_file)}
+
+    with patch.object(manager_module.yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_with_warnings):
+        with patch.object(manager_module.yt_dlp.YoutubeDL, "prepare_filename", return_value=str(audio_file)):
+            # Simulate non-fatal warnings arriving to TaskLogger
+            manager._execute_download(task)
+
+    assert task.status == DownloadStatus.COMPLETED
+    assert task.progress_percent == 100.0
+    assert len(history.items) == 1
+
+    manager.shutdown()
+
+
+def test_resume_and_retry_auto_starts_worker(tmp_path):
+    storage = tmp_path / "hist.json"
+    queue_file = tmp_path / "queue.json"
+    config = AppConfig()
+    history = HistoryManager(storage_path=storage)
+    manager = DownloadManager(config=config, history=history, queue_path=queue_file, auto_start_worker=True)
+
+    task = DownloadTask(id="r1", url="https://youtube.com/1", title="Task 1", status=DownloadStatus.PAUSED)
+    manager.tasks = [task]
+
+    manager.resume_task("r1")
+    assert task.status == DownloadStatus.QUEUED
+    assert manager._worker_thread is not None
+    assert manager._worker_thread.is_alive()
+
+    task.status = DownloadStatus.ERROR
+    manager.retry_task("r1")
+    assert task.status == DownloadStatus.QUEUED
+    assert manager._worker_thread.is_alive()
+
+    manager.shutdown()
+
+
+
 

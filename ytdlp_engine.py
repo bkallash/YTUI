@@ -818,118 +818,206 @@ class YtDlpEngine:
             return video_opts, audio_opts
 
         seen_video_res: set = set()
-        seen_audio_abr: set = set()
-        seen_format_ids: set = set()
+        seen_video_format_ids: set = set()
+        seen_audio_keys: set = set()
+        seen_audio_format_ids: set = set()
 
-        # Sort raw formats by height desc, tbr desc, abr desc
-        sorted_formats = sorted(
-            formats,
+        def _get_audio_bitrate(fmt_dict: Dict[str, Any], is_vid: bool) -> int:
+            abr_val = fmt_dict.get("abr")
+            if abr_val and abr_val > 0:
+                return int(round(float(abr_val)))
+            tbr_val = fmt_dict.get("tbr")
+            if tbr_val and tbr_val > 0 and not is_vid:
+                return int(round(float(tbr_val)))
+            fn = str(fmt_dict.get("format_note") or "")
+            m = re.search(r"(\d+)\s*(?:k|kbps)", fn, re.IGNORECASE)
+            if m:
+                return int(m.group(1))
+            return 0
+
+        # Separate and sort raw formats into video candidates and audio candidates
+        video_candidates: List[Dict[str, Any]] = []
+        audio_candidates: List[Dict[str, Any]] = []
+
+        for f in formats:
+            fid = str(f.get("format_id", "")).strip()
+            if not fid:
+                continue
+
+            vcodec = str(f.get("vcodec") or "none").lower().strip()
+            acodec = str(f.get("acodec") or "none").lower().strip()
+            height = YtDlpEngine._extract_height(f)
+            ext = str(f.get("ext") or "").lower().strip()
+            format_note = str(f.get("format_note") or "").strip()
+
+            is_audio_ext = ext in ["mp3", "m4a", "flac", "opus", "wav", "aac", "ogg", "weba"]
+            has_video_codec = vcodec not in ("none", "", "none_set")
+            has_audio_codec = acodec not in ("none", "", "none_set")
+
+            is_video = (has_video_codec and vcodec != "none") or (height > 0)
+            is_audio = (has_audio_codec and acodec != "none") or is_audio_ext or ("audio" in fid.lower()) or ("audio" in format_note.lower())
+
+            if is_video:
+                video_candidates.append(f)
+            if is_audio:
+                audio_candidates.append(f)
+
+        # Sort video candidates: height desc, tbr desc, fps desc, filesize desc
+        sorted_videos = sorted(
+            video_candidates,
             key=lambda f: (
                 YtDlpEngine._extract_height(f),
                 f.get("tbr") or 0,
-                f.get("abr") or 0,
+                f.get("fps") or 0,
                 f.get("filesize") or f.get("filesize_approx") or 0,
             ),
             reverse=True,
         )
 
-        for f in sorted_formats:
+        # Sort audio candidates: bitrate desc, filesize desc
+        sorted_audios = sorted(
+            audio_candidates,
+            key=lambda f: (
+                _get_audio_bitrate(f, (str(f.get("vcodec") or "none").lower().strip() not in ("none", "", "none_set") or YtDlpEngine._extract_height(f) > 0)),
+                f.get("filesize") or f.get("filesize_approx") or 0,
+            ),
+            reverse=True,
+        )
+
+        # 1. Process video options
+        for f in sorted_videos:
             fid = str(f.get("format_id", "")).strip()
-            if not fid or fid in seen_format_ids:
+            if not fid or fid in seen_video_format_ids:
                 continue
 
-            vcodec = str(f.get("vcodec") or "none").lower()
-            acodec = str(f.get("acodec") or "none").lower()
+            vcodec = str(f.get("vcodec") or "none").lower().strip()
+            acodec = str(f.get("acodec") or "none").lower().strip()
             height = YtDlpEngine._extract_height(f)
             fps = f.get("fps")
-            ext = str(f.get("ext") or "").lower()
+            ext = str(f.get("ext") or "").lower().strip()
+            tbr = f.get("tbr")
+            size = f.get("filesize") or f.get("filesize_approx")
+            format_note = str(f.get("format_note") or "").strip()
+
+            has_video_codec = vcodec not in ("none", "", "none_set")
+            has_audio_codec = acodec not in ("none", "", "none_set")
+
+            seen_video_format_ids.add(fid)
+            fps_str = f"{fps}fps" if fps and fps > 30 else ""
+            codec_short = vcodec.split(".")[0] if has_video_codec else (ext.upper() if ext else "Video")
+
+            res_key = (height, fps if fps and fps > 30 else 30, ext)
+            if res_key in seen_video_res and len(seen_video_res) > 8:
+                continue
+            seen_video_res.add(res_key)
+
+            quality_tag = ""
+            if height >= 2160:
+                quality_tag = " (4K)"
+            elif height >= 1440:
+                quality_tag = " (2K)"
+            elif height >= 1080:
+                quality_tag = " (FHD)"
+            elif height >= 720:
+                quality_tag = " (HD)"
+            elif height > 0:
+                quality_tag = f" ({height}p)"
+
+            fps_badge = f" {fps_str}" if fps_str else ""
+            res_label = f"{height}p" if height > 0 else (format_note or f.get("resolution") or fid)
+            ext_badge = f" [{ext.upper()}]" if ext else ""
+            muxed_badge = " (Video+Audio)" if has_audio_codec else ""
+            label = f"{res_label}{fps_badge}{quality_tag}{ext_badge}{muxed_badge}"
+
+            video_opts.append(
+                FormatOption(
+                    format_id=fid,
+                    format_type="video",
+                    label=label,
+                    resolution=f"{height}p" if height > 0 else res_label,
+                    height=height,
+                    fps=fps,
+                    ext=ext,
+                    vcodec=codec_short,
+                    acodec=acodec if has_audio_codec else "none",
+                    filesize=size,
+                    filesize_str=format_bytes(size),
+                    tbr=tbr,
+                    note=f"{codec_short}, ~{format_bytes(size)}",
+                )
+            )
+
+        # 2. Process audio options
+        for f in sorted_audios:
+            fid = str(f.get("format_id", "")).strip()
+            if not fid or fid in seen_audio_format_ids:
+                continue
+
+            vcodec = str(f.get("vcodec") or "none").lower().strip()
+            acodec = str(f.get("acodec") or "none").lower().strip()
+            height = YtDlpEngine._extract_height(f)
+            ext = str(f.get("ext") or "").lower().strip()
             tbr = f.get("tbr")
             abr = f.get("abr")
             size = f.get("filesize") or f.get("filesize_approx")
+            format_note = str(f.get("format_note") or "").strip()
+            lang = str(f.get("language") or f.get("language_preference") or "").strip()
+            channels = f.get("audio_channels")
 
-            # Determine audio/video flags
-            is_audio_ext = ext in ["mp3", "m4a", "flac", "opus", "wav", "aac", "ogg"]
-            is_video_ext = ext in ["mp4", "mkv", "webm", "mov", "flv", "avi", "ts", "m4v"]
+            has_video = (vcodec not in ("none", "", "none_set") and vcodec != "none") or (height > 0)
+            has_audio_codec = acodec not in ("none", "", "none_set")
 
-            is_video = (vcodec != "none" and vcodec != "") or (height > 0) or (is_video_ext and not is_audio_ext)
-            is_audio = (acodec != "none" and acodec != "") or is_audio_ext or ("audio" in fid.lower())
+            bitrate_val = _get_audio_bitrate(f, has_video)
+            codec_short = acodec.split(".")[0] if has_audio_codec else (ext.upper() if ext else "Audio")
+            ext_str = f" [{ext.upper()}]" if ext else ""
+            chan_str = " (5.1)" if (channels and channels >= 6) else ""
 
-            # 1. Video format candidate
-            if is_video and not (is_audio_ext and vcodec == "none"):
-                seen_format_ids.add(fid)
-                fps_str = f"{fps}fps" if fps and fps > 30 else ""
-                codec_short = vcodec.split(".")[0] if vcodec != "none" else (ext.upper() if ext else "Video")
+            lang_tag = ""
+            if lang and lang.lower() not in ("und", "none", ""):
+                lang_tag = f" [{lang.upper()}]"
+            elif format_note and not any(k in format_note.lower() for k in ["tiny", "small", "medium", "audio only"]):
+                lang_tag = f" ({format_note})"
 
-                # Avoid excessive duplicates of exact same resolution
-                if (height, fps if fps and fps > 30 else 30, ext) in seen_video_res and len(seen_video_res) > 8:
-                    continue
-                seen_video_res.add((height, fps if fps and fps > 30 else 30, ext))
+            bitrate_str = f"{bitrate_val} kbps" if bitrate_val > 0 else (format_note or "Audio")
+            label = f"{bitrate_str}{ext_str} ({codec_short}){chan_str}{lang_tag}".strip()
+            label = re.sub(r"\s+", " ", label)
 
-                quality_tag = ""
-                if height >= 2160:
-                    quality_tag = " (4K)"
-                elif height >= 1440:
-                    quality_tag = " (2K)"
-                elif height >= 1080:
-                    quality_tag = " (FHD)"
-                elif height >= 720:
-                    quality_tag = " (HD)"
-                elif height > 0:
-                    quality_tag = f" ({height}p)"
+            audio_key = (
+                round(bitrate_val / 16) * 16 if bitrate_val > 0 else 0,
+                ext,
+                codec_short,
+                lang.lower(),
+                channels or 2,
+            )
+            if audio_key in seen_audio_keys and len(seen_audio_keys) > 12:
+                continue
+            seen_audio_keys.add(audio_key)
+            seen_audio_format_ids.add(fid)
 
-                fps_badge = f" {fps_str}" if fps_str else ""
-                res_label = f"{height}p" if height > 0 else (f.get("format_note") or f.get("resolution") or fid)
-                ext_badge = f" [{ext.upper()}]" if ext else ""
-                muxed_badge = " (Video+Audio)" if is_audio and acodec != "none" else ""
-                label = f"{res_label}{fps_badge}{quality_tag}{ext_badge}{muxed_badge}"
+            note_parts = [codec_short]
+            if format_bytes(size) != "N/A":
+                note_parts.append(f"~{format_bytes(size)}")
+            if channels and channels >= 6:
+                note_parts.append("5.1 Surround")
+            if lang:
+                note_parts.append(lang.upper())
+            note_str = ", ".join(note_parts)
 
-                video_opts.append(
-                    FormatOption(
-                        format_id=fid,
-                        format_type="video",
-                        label=label,
-                        resolution=f"{height}p" if height > 0 else res_label,
-                        height=height,
-                        fps=fps,
-                        ext=ext,
-                        vcodec=codec_short,
-                        acodec=acodec if acodec != "none" else "none",
-                        filesize=size,
-                        filesize_str=format_bytes(size),
-                        tbr=tbr,
-                        note=f"{codec_short}, ~{format_bytes(size)}",
-                    )
+            audio_opts.append(
+                FormatOption(
+                    format_id=fid,
+                    format_type="audio",
+                    label=label,
+                    resolution=f"{bitrate_val}k" if bitrate_val > 0 else "audio",
+                    ext=ext,
+                    vcodec="none",
+                    acodec=codec_short,
+                    filesize=size,
+                    filesize_str=format_bytes(size),
+                    tbr=tbr or (float(bitrate_val) if bitrate_val > 0 else None),
+                    note=note_str,
                 )
-
-            # 2. Audio format candidate (audio-only streams or distinct audio tracks)
-            if is_audio and (vcodec == "none" or is_audio_ext or not is_video):
-                seen_format_ids.add(fid)
-                bitrate_val = int(abr) if abr else (int(tbr) if tbr else 0)
-                abr_key = (round(bitrate_val / 16) * 16 if bitrate_val > 0 else 0, ext)
-                if abr_key in seen_audio_abr and len(seen_audio_abr) > 6:
-                    continue
-                seen_audio_abr.add(abr_key)
-
-                codec_short = acodec.split(".")[0] if acodec != "none" else (ext.upper() if ext else "Audio")
-                bitrate_str = f"{bitrate_val} kbps" if bitrate_val > 0 else (f.get("format_note") or "Audio")
-                ext_str = f" [{ext.upper()}]" if ext else ""
-                label = f"{bitrate_str}{ext_str} ({codec_short})"
-
-                audio_opts.append(
-                    FormatOption(
-                        format_id=fid,
-                        format_type="audio",
-                        label=label,
-                        resolution=f"{bitrate_val}k" if bitrate_val > 0 else "audio",
-                        ext=ext,
-                        vcodec="none",
-                        acodec=codec_short,
-                        filesize=size,
-                        filesize_str=format_bytes(size),
-                        tbr=tbr,
-                        note=f"{codec_short}, ~{format_bytes(size)}",
-                    )
-                )
+            )
 
         return video_opts, audio_opts
 
@@ -940,19 +1028,30 @@ class YtDlpEngine:
         if p.exists() and p.is_file():
             return str(p)
 
-        stem = p.parent / p.stem
-        # Check explicit container target
+        # Check explicit container target (using p.with_suffix so dots in title aren't lost)
         if container:
-            cand = stem.with_suffix(f".{container.lower()}")
-            if cand.exists():
+            cand = p.with_suffix(f".{container.lower()}")
+            if cand.exists() and cand.is_file():
                 return str(cand)
 
         # Check standard video/audio extensions
-        exts = ["mp3", "m4a", "flac", "opus", "wav", "aac"] if is_audio_only else ["mp4", "mkv", "webm", "mov"]
+        exts = ["mp3", "m4a", "flac", "opus", "wav", "aac", "ogg"] if is_audio_only else ["mp4", "mkv", "webm", "mov", "m4v"]
         for ext in exts:
-            cand = stem.with_suffix(f".{ext}")
-            if cand.exists():
+            cand = p.with_suffix(f".{ext}")
+            if cand.exists() and cand.is_file():
                 return str(cand)
+
+        # Also search in the parent directory for matching base stem
+        try:
+            parent_dir = p.parent
+            if parent_dir.exists() and parent_dir.is_dir():
+                clean_stem = p.stem.split(".tmp")[0].split(".temp")[0]
+                for ext in ([container.lower()] if container else []) + exts:
+                    cand = parent_dir / f"{clean_stem}.{ext}"
+                    if cand.exists() and cand.is_file():
+                        return str(cand)
+        except Exception:
+            pass
 
         return base_filename
 
@@ -977,11 +1076,11 @@ class YtDlpEngine:
 
         # Format string builder supporting both separated (YouTube) and muxed/single-stream (Vimeo, Twitter, TikTok, etc.)
         if is_audio_only:
-            # Audio only
+            # Audio only: try specified audio format with fallback to best audio
             if audio_format_id in ("bestaudio", "none", ""):
                 format_spec = "bestaudio/best"
             else:
-                format_spec = audio_format_id
+                format_spec = f"{audio_format_id}/bestaudio/best"
         elif audio_format_id in ("none", ""):
             # Video only requested
             if video_format_id == "bestvideo":

@@ -223,8 +223,6 @@ class SearchScreen(Screen):
 
     def on_resize(self, event) -> None:
         self._update_table_columns()
-        if self.search_results:
-            self._populate_results_table(self.search_results)
 
     def _update_table_columns(self) -> None:
         table = self.query_one("#results-table", DataTable)

@@ -28,7 +28,9 @@ def prevent_real_downloads(monkeypatch):
 
     # 3. Mock ffmpeg availability to True by default so tests start directly in SearchScreen
     import ffmpeg_utils
+    import app
     monkeypatch.setattr(ffmpeg_utils, "is_ffmpeg_available", lambda *args, **kwargs: True)
+    monkeypatch.setattr(app, "is_ffmpeg_available", lambda *args, **kwargs: True)
 
     yield
 

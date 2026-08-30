@@ -109,17 +109,27 @@ class ExtractionResult:
     raw_info: Dict[str, Any] = field(default_factory=dict)
 
 
+URL_RE = re.compile(r"^(https?://|www\.|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)")
+SHORTS_RE = re.compile(r"(youtube\.com|youtu\.be)/shorts/", re.IGNORECASE)
+BITRATE_RE = re.compile(r"(\d+)\s*(?:k|kbps)", re.IGNORECASE)
+LANG_CODE_RE = re.compile(r"[A-Za-z]{2,3}")
+RES_X_RE = re.compile(r"(\d+)\s*[xX]\s*(\d+)")
+RES_P_RE = re.compile(r"(\d{3,4})p", re.IGNORECASE)
+RES_4K_RE = re.compile(r"\b4k\b", re.IGNORECASE)
+RES_2K_RE = re.compile(r"\b2k\b", re.IGNORECASE)
+
+
 def is_url(text: str) -> bool:
     """Check if input text is a valid web URL."""
     text = text.strip()
-    return bool(re.match(r"^(https?://|www\.|[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}/)", text))
+    return bool(URL_RE.match(text))
 
 
 def is_shorts(url: str, duration: Optional[int] = None, info: Optional[Dict[str, Any]] = None) -> bool:
     """Check if a video URL or metadata corresponds to a YouTube Shorts video."""
     if not url:
         return False
-    if bool(re.search(r"(youtube\.com|youtu\.be)/shorts/", url, re.IGNORECASE)):
+    if bool(SHORTS_RE.search(url)):
         return True
     if info:
         if info.get("is_shorts"):
@@ -163,7 +173,7 @@ def extract_audio_quality_from_option(option: Optional[FormatOption]) -> str:
             return str(bitrate)
 
     text = f"{option.resolution} {option.label}"
-    m = re.search(r"(\d+)\s*(?:k|kbps)", text, re.IGNORECASE)
+    m = BITRATE_RE.search(text)
     if m:
         val = int(m.group(1))
         if val >= 290:
@@ -248,7 +258,7 @@ def _subtitle_language_patterns(raw_languages: str, include_auto_generated: bool
 
     patterns: List[str] = []
     for language in languages:
-        if language != "all" and re.fullmatch(r"[A-Za-z]{2,3}", language):
+        if language != "all" and LANG_CODE_RE.fullmatch(language):
             patterns.append(rf"{re.escape(language)}(?:[-_].*)?")
         else:
             patterns.append(language)
@@ -684,7 +694,7 @@ class YtDlpEngine:
                 elif audio_fmt.format_id == "bestaudio":
                     audio_kbps = 160.0
                 else:
-                    m = re.search(r"(\d+)\s*k", str(audio_fmt.label or ""), re.IGNORECASE)
+                    m = BITRATE_RE.search(str(audio_fmt.label or ""))
                     if m:
                         audio_kbps = float(m.group(1))
                     else:
@@ -745,18 +755,18 @@ class YtDlpEngine:
         if h and isinstance(h, int) and h > 0:
             return h
         res = str(f.get("resolution") or "")
-        m = re.search(r"(\d+)\s*[xX]\s*(\d+)", res)
+        m = RES_X_RE.search(res)
         if m:
             w_val, h_val = int(m.group(1)), int(m.group(2))
             return min(w_val, h_val)
         for key in ["resolution", "format_note", "format", "format_id"]:
             val = str(f.get(key) or "")
-            m2 = re.search(r"(\d{3,4})p", val, re.IGNORECASE)
+            m2 = RES_P_RE.search(val)
             if m2:
                 return int(m2.group(1))
-            if re.search(r"\b4k\b", val, re.IGNORECASE):
+            if RES_4K_RE.search(val):
                 return 2160
-            if re.search(r"\b2k\b", val, re.IGNORECASE):
+            if RES_2K_RE.search(val):
                 return 1440
         return 0
 
@@ -830,7 +840,7 @@ class YtDlpEngine:
             if tbr_val and tbr_val > 0 and not is_vid:
                 return int(round(float(tbr_val)))
             fn = str(fmt_dict.get("format_note") or "")
-            m = re.search(r"(\d+)\s*(?:k|kbps)", fn, re.IGNORECASE)
+            m = BITRATE_RE.search(fn)
             if m:
                 return int(m.group(1))
             return 0
@@ -858,15 +868,17 @@ class YtDlpEngine:
             is_audio = (has_audio_codec and acodec != "none") or is_audio_ext or ("audio" in fid.lower()) or ("audio" in format_note.lower())
 
             if is_video:
+                f["_parsed_height"] = height
                 video_candidates.append(f)
             if is_audio:
+                f["_parsed_audio_bitrate"] = _get_audio_bitrate(f, has_video_codec or (height > 0))
                 audio_candidates.append(f)
 
         # Sort video candidates: height desc, tbr desc, fps desc, filesize desc
         sorted_videos = sorted(
             video_candidates,
             key=lambda f: (
-                YtDlpEngine._extract_height(f),
+                f.get("_parsed_height", 0),
                 f.get("tbr") or 0,
                 f.get("fps") or 0,
                 f.get("filesize") or f.get("filesize_approx") or 0,
@@ -878,7 +890,7 @@ class YtDlpEngine:
         sorted_audios = sorted(
             audio_candidates,
             key=lambda f: (
-                _get_audio_bitrate(f, (str(f.get("vcodec") or "none").lower().strip() not in ("none", "", "none_set") or YtDlpEngine._extract_height(f) > 0)),
+                f.get("_parsed_audio_bitrate", 0),
                 f.get("filesize") or f.get("filesize_approx") or 0,
             ),
             reverse=True,
@@ -892,7 +904,7 @@ class YtDlpEngine:
 
             vcodec = str(f.get("vcodec") or "none").lower().strip()
             acodec = str(f.get("acodec") or "none").lower().strip()
-            height = YtDlpEngine._extract_height(f)
+            height = f.get("_parsed_height") if "_parsed_height" in f else YtDlpEngine._extract_height(f)
             fps = f.get("fps")
             ext = str(f.get("ext") or "").lower().strip()
             tbr = f.get("tbr")
@@ -967,7 +979,7 @@ class YtDlpEngine:
             has_video = (vcodec not in ("none", "", "none_set") and vcodec != "none") or (height > 0)
             has_audio_codec = acodec not in ("none", "", "none_set")
 
-            bitrate_val = _get_audio_bitrate(f, has_video)
+            bitrate_val = f.get("_parsed_audio_bitrate") if "_parsed_audio_bitrate" in f else _get_audio_bitrate(f, has_video)
             codec_short = acodec.split(".")[0] if has_audio_codec else (ext.upper() if ext else "Audio")
             ext_str = f" [{ext.upper()}]" if ext else ""
             chan_str = " (5.1)" if (channels and channels >= 6) else ""

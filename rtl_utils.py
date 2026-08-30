@@ -1,10 +1,15 @@
 """RTL and Arabic text shaping utility functions for terminal UI rendering."""
 
+import re
 from functools import lru_cache
 from typing import Optional
 import arabic_reshaper
 from bidi.algorithm import get_display
 from rich.text import Text
+
+RTL_RE = re.compile(
+    r"[\u0590-\u05FF\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB1D-\uFB4F\uFB50-\uFDFF\uFE70-\uFEFF]"
+)
 
 # Reshaper configuration: clean presentation forms without overlapping diacritics / tatweel gaps
 _RESHAPER_CONFIG = {
@@ -36,16 +41,7 @@ def has_rtl(text: Optional[str]) -> bool:
     """Check whether a string contains RTL (Arabic, Hebrew, Persian, Urdu) characters."""
     if not text or not isinstance(text, str):
         return False
-    return any(
-        "\u0590" <= ch <= "\u05FF"  # Hebrew
-        or "\u0600" <= ch <= "\u06FF"  # Arabic
-        or "\u0750" <= ch <= "\u077F"  # Arabic Supplement
-        or "\u08A0" <= ch <= "\u08FF"  # Arabic Extended-A
-        or "\uFB1D" <= ch <= "\uFB4F"  # Hebrew Presentation Forms
-        or "\uFB50" <= ch <= "\uFDFF"  # Arabic Presentation Forms-A
-        or "\uFE70" <= ch <= "\uFEFF"  # Arabic Presentation Forms-B
-        for ch in text
-    )
+    return bool(RTL_RE.search(text))
 
 
 @lru_cache(maxsize=2048)

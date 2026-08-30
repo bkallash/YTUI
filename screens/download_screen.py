@@ -160,6 +160,7 @@ class DownloadScreen(Screen):
         self._last_tasks_snapshot: str = ""
         self._last_log_count: int = -1
         self._last_log_task_id: Optional[str] = None
+        self._rendered_cell_cache: Dict[str, Tuple] = {}
 
     def compose(self) -> ComposeResult:
         yield Header(show_clock=True)
@@ -338,31 +339,60 @@ class DownloadScreen(Screen):
             # Rebuild table rows if tasks were added/removed/reordered
             if current_row_keys != task_ids:
                 table.clear()
+                self._rendered_cell_cache.clear()
                 for i, task in enumerate(tasks):
                     t_title = rtl_truncate(task.title, max_len=title_max_len)
+                    c_status = self._render_status(task.status)
+                    c_fmt = self._format_short_res(task)
+                    c_prog = f"{task.progress_percent:.1f}%"
+                    c_speed = task.speed_str or "--"
+                    c_eta = task.eta_str or "--"
+                    c_size = format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--")
+
+                    row_vals = (c_status, t_title, c_fmt, c_prog, c_speed, c_eta, c_size)
+                    self._rendered_cell_cache[task.id] = row_vals
+
                     table.add_row(
                         str(i + 1),
-                        self._render_status(task.status),
+                        c_status,
                         t_title,
-                        self._format_short_res(task),
-                        f"{task.progress_percent:.1f}%",
-                        task.speed_str or "--",
-                        task.eta_str or "--",
-                        format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--"),
+                        c_fmt,
+                        c_prog,
+                        c_speed,
+                        c_eta,
+                        c_size,
                         key=task.id,
                     )
             else:
-                # Update cells in place
+                # Update cells in place only when values actually change
                 for task in tasks:
                     t_title = rtl_truncate(task.title, max_len=title_max_len)
-                    table.update_cell(task.id, self.col_keys[1], self._render_status(task.status))
-                    table.update_cell(task.id, self.col_keys[2], t_title)
-                    table.update_cell(task.id, self.col_keys[3], self._format_short_res(task))
-                    table.update_cell(task.id, self.col_keys[4], f"{task.progress_percent:.1f}%")
-                    table.update_cell(task.id, self.col_keys[5], task.speed_str or "--")
-                    table.update_cell(task.id, self.col_keys[6], task.eta_str or "--")
-                    size_str = format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--")
-                    table.update_cell(task.id, self.col_keys[7], size_str)
+                    c_status = self._render_status(task.status)
+                    c_fmt = self._format_short_res(task)
+                    c_prog = f"{task.progress_percent:.1f}%"
+                    c_speed = task.speed_str or "--"
+                    c_eta = task.eta_str or "--"
+                    c_size = format_bytes(task.total_bytes) if task.total_bytes > 0 else (format_bytes(task.downloaded_bytes) if task.downloaded_bytes > 0 else "--")
+
+                    new_vals = (c_status, t_title, c_fmt, c_prog, c_speed, c_eta, c_size)
+                    old_vals = self._rendered_cell_cache.get(task.id)
+
+                    if old_vals != new_vals:
+                        self._rendered_cell_cache[task.id] = new_vals
+                        if not old_vals or old_vals[0] != c_status:
+                            table.update_cell(task.id, self.col_keys[1], c_status)
+                        if not old_vals or old_vals[1] != t_title:
+                            table.update_cell(task.id, self.col_keys[2], t_title)
+                        if not old_vals or old_vals[2] != c_fmt:
+                            table.update_cell(task.id, self.col_keys[3], c_fmt)
+                        if not old_vals or old_vals[3] != c_prog:
+                            table.update_cell(task.id, self.col_keys[4], c_prog)
+                        if not old_vals or old_vals[4] != c_speed:
+                            table.update_cell(task.id, self.col_keys[5], c_speed)
+                        if not old_vals or old_vals[5] != c_eta:
+                            table.update_cell(task.id, self.col_keys[6], c_eta)
+                        if not old_vals or old_vals[6] != c_size:
+                            table.update_cell(task.id, self.col_keys[7], c_size)
 
             if not self.selected_task_id and tasks:
                 self.selected_task_id = tasks[0].id

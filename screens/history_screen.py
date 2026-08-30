@@ -153,10 +153,11 @@ class HistoryScreen(Screen):
 
     def _check_history_updates(self) -> None:
         mgr = getattr(self, "manager", None)
-        active_items = mgr.history.items if (mgr and hasattr(mgr, "history") and mgr.history) else self.history_mgr.items
+        if mgr and hasattr(mgr, "history") and mgr.history and self.history_mgr.storage_path == mgr.history.storage_path:
+            self.history_mgr = mgr.history
+
+        active_items = self.history_mgr.items
         if len(active_items) != self._last_item_count:
-            if mgr and hasattr(mgr, "history") and mgr.history and self.history_mgr.storage_path == mgr.history.storage_path:
-                self.history_mgr = mgr.history
             self.populate_history()
 
     def on_unmount(self) -> None:
@@ -190,13 +191,12 @@ class HistoryScreen(Screen):
             table.refresh()
 
     def on_screen_resume(self) -> None:
-        items = self.history_mgr.load()
+        items = self.history_mgr.load(force_reload=True)
         if len(items) != self._last_item_count:
             self.populate_history()
 
     def on_resize(self, event) -> None:
         self._update_table_columns()
-        self.populate_history()
 
     def action_focus_search(self) -> None:
         inp = self.query_one("#history-search-input", Input)

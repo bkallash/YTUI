@@ -50,11 +50,15 @@ class HistoryManager:
     def __init__(self, storage_path: Optional[Path] = None):
         self.storage_path = storage_path or (get_config_dir() / "history.json")
         self.items: List[HistoryItem] = []
+        self._loaded: bool = False
         self.load()
 
-    def load(self) -> List[HistoryItem]:
+    def load(self, force_reload: bool = False) -> List[HistoryItem]:
+        if self._loaded and not force_reload:
+            return self.items
         if not self.storage_path.exists():
             self.items = []
+            self._loaded = True
             return self.items
         try:
             with open(self.storage_path, "r", encoding="utf-8") as f:
@@ -69,11 +73,13 @@ class HistoryManager:
             self.items = unique_items
         except Exception:
             self.items = []
+        self._loaded = True
         return self.items
 
     def save(self) -> None:
         try:
             atomic_json_save(self.storage_path, [asdict(item) for item in self.items], indent=2, file_mode=0o600, dir_mode=0o700)
+            self._loaded = True
         except Exception as e:
             print(f"Warning: Could not save history: {e}", file=sys.stderr)
 

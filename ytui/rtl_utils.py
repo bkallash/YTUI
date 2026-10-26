@@ -3,8 +3,7 @@
 import re
 from functools import lru_cache
 from typing import Optional
-import arabic_reshaper
-from bidi.algorithm import get_display
+
 from rich.text import Text
 
 RTL_RE = re.compile(
@@ -19,7 +18,16 @@ _RESHAPER_CONFIG = {
     "support_zwj": True,
     "use_unshaped_instead_of_isolated": False,
 }
-_reshaper = arabic_reshaper.ArabicReshaper(configuration=_RESHAPER_CONFIG)
+
+
+@lru_cache(maxsize=1)
+def _shaping():
+    """Load the shaping libraries on first RTL text, so other users never pay their import cost."""
+    import arabic_reshaper
+    from bidi.algorithm import get_display
+
+    return arabic_reshaper.ArabicReshaper(configuration=_RESHAPER_CONFIG), get_display
+
 
 _CURRENT_RTL_MODE = "reshaped_bidi"
 
@@ -53,16 +61,11 @@ def _fix_rtl_cached(text: str, mode: str) -> str:
     if mode in ("native_raw", "disabled"):
         return text
 
-    if mode == "bidi_only":
-        try:
-            return get_display(text)
-        except Exception:
-            return text
-
-    # Default 'reshaped_bidi'
+    reshaper, get_display = _shaping()
     try:
-        reshaped = _reshaper.reshape(text)
-        return get_display(reshaped)
+        if mode == "bidi_only":
+            return get_display(text)
+        return get_display(reshaper.reshape(text))  # default 'reshaped_bidi'
     except Exception:
         return text
 
@@ -104,3 +107,20 @@ def render_rtl_text(text: Optional[str], style: str = "", mode: Optional[str] = 
     """Return a Rich Text object with RTL-formatted text and optional style."""
     fixed = fix_rtl(text, mode=mode)
     return Text(fixed, style=style) if style else Text(fixed)
+
+
+def escape_markup(text: str) -> str:
+    """Make text literal inside Textual markup.
+
+    textual/rich `escape()` only escape tags that start with a lowercase letter, but Textual's
+    parser also treats "[Official Video]" or "[MP4]" as tags and drops them. A backslash only
+    matters right before "[", so a trailing one gets a zero-width space to keep it from
+    escaping the caller's closing tag.
+    """
+    escaped = text.replace("[", "\\[")
+    return escaped + "\u200b" if escaped.endswith("\\") else escaped
+
+
+def markup_safe(text: Optional[str], max_len: Optional[int] = None) -> str:
+    """RTL-format (and optionally truncate) text for embedding in Textual markup."""
+    return escape_markup(rtl_truncate(text, max_len) if max_len else fix_rtl(text))

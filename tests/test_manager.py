@@ -3,20 +3,9 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 
 import pytest
-from config import AppConfig
-from history import HistoryManager
-from manager import DownloadManager, DownloadStatus, DownloadTask
-
-
-@pytest.fixture(autouse=True)
-def reset_manager_singleton():
-    if DownloadManager._instance:
-        DownloadManager._instance.shutdown()
-        DownloadManager._instance = None
-    yield
-    if DownloadManager._instance:
-        DownloadManager._instance.shutdown()
-        DownloadManager._instance = None
+from ytui.config import AppConfig
+from ytui.history import HistoryManager
+from ytui.manager import DownloadManager, DownloadStatus, DownloadTask
 
 
 def test_task_serialization():
@@ -136,7 +125,7 @@ def test_manager_session_persistence_and_recovery(tmp_path):
 
 
 def test_task_logger_and_fatal_error_detection():
-    from manager import TaskLogger
+    from ytui.manager import TaskLogger
     task = DownloadTask(id="log-t1", url="https://youtube.com/watch?v=1", title="Test Log Task")
     logger = TaskLogger(task)
 
@@ -179,9 +168,8 @@ def test_download_validation_and_format_attribution(tmp_path, monkeypatch):
     monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
 
     from unittest.mock import patch
-    import manager as manager_module
 
-    with patch.object(manager_module.yt_dlp.YoutubeDL, "extract_info", side_effect=yt_dlp.utils.DownloadError("unable to download video data: HTTP Error 403: Forbidden")):
+    with patch.object(yt_dlp.YoutubeDL, "extract_info", side_effect=yt_dlp.utils.DownloadError("unable to download video data: HTTP Error 403: Forbidden")):
         manager._execute_download(task)
 
     # Verify task is NOT marked as completed
@@ -223,8 +211,7 @@ def test_client_fallback_on_403_forbidden_succeeds(tmp_path, monkeypatch):
     from tests.conftest import ORIGINAL_EXECUTE_DOWNLOAD
     monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
 
-    from unittest.mock import MagicMock, patch
-    import manager as manager_module
+    from unittest.mock import patch
 
     attempts = 0
     clients_tried = []
@@ -237,8 +224,8 @@ def test_client_fallback_on_403_forbidden_succeeds(tmp_path, monkeypatch):
             raise yt_dlp.utils.DownloadError("unable to download video data: HTTP Error 403: Forbidden")
         return {"id": "test", "title": "Test Success Video", "ext": "mp4", "_filename": str(test_file)}
 
-    with patch.object(manager_module.yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_info):
-        with patch.object(manager_module.yt_dlp.YoutubeDL, "prepare_filename", return_value=str(test_file)):
+    with patch.object(yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_info):
+        with patch.object(yt_dlp.YoutubeDL, "prepare_filename", return_value=str(test_file)):
             manager._execute_download(task)
 
     assert attempts >= 2
@@ -294,33 +281,27 @@ def test_download_task_concurrent_add_log():
         assert len(log) > 0
 
 
-def test_progress_hook_event_loop_throttling(tmp_path, monkeypatch):
-    import time
-    from unittest.mock import MagicMock
+def test_progress_hook_updates_combined_progress_and_version(tmp_path, monkeypatch):
+    """Progress ticks update combined multi-stream progress and bump `version` (the UI polls it)."""
     from tests.conftest import ORIGINAL_EXECUTE_DOWNLOAD
     monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
 
-    queue_file = tmp_path / "queue.json"
     config = AppConfig(download_dir=str(tmp_path))
     history = HistoryManager(storage_path=tmp_path / "hist.json")
-    manager = DownloadManager(config=config, history=history, queue_path=queue_file, auto_start_worker=False)
+    manager = DownloadManager(config=config, history=history, queue_path=tmp_path / "queue.json", auto_start_worker=False)
 
-    notify_mock = MagicMock()
-    manager.add_listener(notify_mock)
-
-    captured_progress_hook = None
-    started_event = threading.Event()
-    stop_event = threading.Event()
+    captured = {}
 
     def fake_build_options(**kwargs):
-        nonlocal captured_progress_hook
-        captured_progress_hook = kwargs.get("progress_hook")
+        captured["hook"] = kwargs.get("progress_hook")
         return {}
 
-    from ytdlp_engine import YtDlpEngine
+    from ytui.ytdlp_engine import YtDlpEngine
     monkeypatch.setattr(YtDlpEngine, "build_download_options", fake_build_options)
 
     import yt_dlp
+    started_event = threading.Event()
+    stop_event = threading.Event()
 
     class FakeYoutubeDL:
         def __init__(self, params=None):
@@ -337,68 +318,34 @@ def test_progress_hook_event_loop_throttling(tmp_path, monkeypatch):
             return str(tmp_path / "video.mp4")
 
     monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYoutubeDL)
-
-    # Create dummy output file so completion verification passes
     (tmp_path / "video.mp4").write_bytes(b"dummy video data")
 
     task = DownloadTask(
-        id="throttle-task",
-        url="https://youtube.com/watch?v=throttle",
-        title="Throttle Video",
-        video_format="137",
-        audio_format="140",
-        container="mp4",
-        status=DownloadStatus.QUEUED,
+        id="progress-task", url="https://youtube.com/watch?v=p", title="Progress Video",
+        video_format="137", audio_format="140", container="mp4", estimated_total_bytes=2_000_000,
     )
-
-    # Start download in a thread to test progress hook throttling
     t = threading.Thread(target=manager._execute_download, args=(task,))
     t.start()
+    assert started_event.wait(timeout=2.0)
+    hook = captured["hook"]
 
-    # Wait for extract_info to start
-    started_event.wait(timeout=2.0)
-    assert captured_progress_hook is not None
+    version = manager.version
+    hook({"status": "downloading", "total_bytes": 1_000_000, "downloaded_bytes": 500_000, "speed": 100_000})
+    assert manager.version != version
+    # Stream 1 of 2: progress is measured against the combined estimate, not just this stream
+    assert task.progress_percent == 25.0
+    assert task.eta_str == "00:15"
 
-    # Reset notify mock calls
-    notify_mock.reset_mock()
+    hook({"status": "finished", "total_bytes": 1_000_000, "downloaded_bytes": 1_000_000})
+    hook({"status": "downloading", "total_bytes": 1_000_000, "downloaded_bytes": 500_000, "speed": 100_000})
+    assert task.progress_percent == 75.0
 
-    # Call downloading hook rapidly 10 times with no sleep
-    for i in range(10):
-        captured_progress_hook({
-            "status": "downloading",
-            "total_bytes": 1000000,
-            "downloaded_bytes": 1000 * (i + 1),
-            "speed": 50000,
-            "eta": 10,
-        })
+    hook({"status": "finished", "total_bytes": 1_000_000, "downloaded_bytes": 1_000_000})
+    assert task.status == DownloadStatus.MERGING
 
-    # Due to ~125ms throttling, 10 instant calls should only invoke notify once
-    assert notify_mock.call_count == 1
-
-    # Sleep past throttle duration (150ms)
-    time.sleep(0.15)
-
-    # Calling downloading hook again should now notify
-    captured_progress_hook({
-        "status": "downloading",
-        "total_bytes": 1000000,
-        "downloaded_bytes": 20000,
-        "speed": 50000,
-        "eta": 9,
-    })
-    assert notify_mock.call_count == 2
-
-    # Significant state change: "finished" should notify immediately without throttling
-    captured_progress_hook({
-        "status": "finished",
-        "total_bytes": 500000,
-        "downloaded_bytes": 500000,
-    })
-    assert notify_mock.call_count == 3
-
-    # Release extract_info and wait for thread to join
     stop_event.set()
     t.join(timeout=3.0)
+    assert task.status == DownloadStatus.COMPLETED
     manager.shutdown()
 
 
@@ -432,14 +379,13 @@ def test_audio_download_validation_succeeds_with_nonfatal_logger_messages(tmp_pa
     monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
 
     from unittest.mock import patch
-    import manager as manager_module
 
     def mock_extract_with_warnings(url, download=True):
         # Emulate non-fatal notices logged during download/postprocessing
         return {"id": "abc123", "title": "Song", "ext": "mp3", "_filename": str(audio_file)}
 
-    with patch.object(manager_module.yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_with_warnings):
-        with patch.object(manager_module.yt_dlp.YoutubeDL, "prepare_filename", return_value=str(audio_file)):
+    with patch.object(yt_dlp.YoutubeDL, "extract_info", side_effect=mock_extract_with_warnings):
+        with patch.object(yt_dlp.YoutubeDL, "prepare_filename", return_value=str(audio_file)):
             # Simulate non-fatal warnings arriving to TaskLogger
             manager._execute_download(task)
 
@@ -450,7 +396,7 @@ def test_audio_download_validation_succeeds_with_nonfatal_logger_messages(tmp_pa
     manager.shutdown()
 
 
-def test_resume_and_retry_auto_starts_worker(tmp_path):
+def test_resume_and_retry_dispatch_immediately(tmp_path):
     storage = tmp_path / "hist.json"
     queue_file = tmp_path / "queue.json"
     config = AppConfig()
@@ -460,18 +406,123 @@ def test_resume_and_retry_auto_starts_worker(tmp_path):
     task = DownloadTask(id="r1", url="https://youtube.com/1", title="Task 1", status=DownloadStatus.PAUSED)
     manager.tasks = [task]
 
-    manager.resume_task("r1")
-    assert task.status == DownloadStatus.QUEUED
-    assert manager._worker_thread is not None
-    assert manager._worker_thread.is_alive()
+    assert manager.resume_task("r1") is True
+    # Dispatch is synchronous: no polling thread delay before the download starts
+    assert task.status == DownloadStatus.DOWNLOADING
 
     task.status = DownloadStatus.ERROR
-    manager.retry_task("r1")
-    assert task.status == DownloadStatus.QUEUED
-    assert manager._worker_thread.is_alive()
+    assert manager.retry_task("r1") is True
+    assert task.status in (DownloadStatus.QUEUED, DownloadStatus.DOWNLOADING)
 
     manager.shutdown()
 
 
+def test_requeued_task_never_runs_twice_concurrently(tmp_path, monkeypatch):
+    """Pause then resume while the old download thread is still winding down must not start a second one."""
+    release = threading.Event()
+    runs = []
+
+    def slow_execute(self, task):
+        runs.append(task.id)
+        release.wait(timeout=5)
+
+    monkeypatch.setattr(DownloadManager, "_execute_download", slow_execute)
+    manager = DownloadManager(config=AppConfig(max_concurrent_downloads=3), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=tmp_path / "q.json")
+    task = DownloadTask(id="dup", url="https://youtube.com/watch?v=d", title="Dup")
+    manager.enqueue(task)
+    assert runs == ["dup"] and manager.is_running("dup")
+
+    manager.pause_task("dup")
+    manager.resume_task("dup")
+    assert task.status == DownloadStatus.QUEUED
+    assert runs == ["dup"]  # still only the original run
+
+    release.set()
+    for _ in range(100):  # the finished run frees the slot and the re-queued task starts
+        if len(runs) == 2:
+            break
+        threading.Event().wait(0.02)
+    assert runs == ["dup", "dup"]
+    manager.shutdown()
 
 
+def test_single_stream_fallback_counts_as_success(tmp_path, monkeypatch):
+    """A video+audio request that yt-dlp satisfies with one muxed stream ('.../best') is a success."""
+    import yt_dlp
+    from tests.conftest import ORIGINAL_EXECUTE_DOWNLOAD
+    from unittest.mock import patch
+
+    monkeypatch.setattr(DownloadManager, "_execute_download", ORIGINAL_EXECUTE_DOWNLOAD)
+    history = HistoryManager(storage_path=tmp_path / "h.json")
+    manager = DownloadManager(config=AppConfig(download_dir=str(tmp_path)), history=history, queue_path=tmp_path / "q.json", auto_start_worker=False)
+    out = tmp_path / "Clip [x].mp4"
+    out.write_bytes(b"muxed data")
+    task = DownloadTask(id="mux", url="https://vimeo.com/1", title="Clip", video_format="http-1080p", audio_format="bestaudio")
+
+    def fake_extract(self, url, download=True):
+        for hook in self.params["progress_hooks"]:
+            hook({"status": "finished", "total_bytes": 10, "downloaded_bytes": 10})  # only ONE stream
+        return {"id": "x", "requested_downloads": [{"filepath": str(out)}]}
+
+    with patch.object(yt_dlp.YoutubeDL, "extract_info", fake_extract):
+        manager._execute_download(task)
+
+    assert task.status == DownloadStatus.COMPLETED
+    assert task.output_filepath == str(out)
+    assert history.items[0].filesize_bytes == len(b"muxed data")
+
+
+def test_delete_running_task_signals_it_to_stop(tmp_path):
+    manager = DownloadManager(config=AppConfig(), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=tmp_path / "q.json", auto_start_worker=False)
+    task = DownloadTask(id="del", url="u", title="T", status=DownloadStatus.DOWNLOADING)
+    manager.tasks = [task]
+    manager.delete_task("del")
+    assert task.is_cancelled is True
+    assert manager.tasks == []
+
+
+def test_cancel_does_not_touch_completed_tasks(tmp_path):
+    manager = DownloadManager(config=AppConfig(), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=tmp_path / "q.json", auto_start_worker=False)
+    task = DownloadTask(id="done", url="u", title="T", status=DownloadStatus.COMPLETED)
+    manager.tasks = [task]
+    assert manager.cancel_task("done") is False
+    assert task.status == DownloadStatus.COMPLETED
+
+
+def test_corrupt_queue_file_is_backed_up(tmp_path):
+    queue_file = tmp_path / "queue.json"
+    queue_file.write_text("[{broken", encoding="utf-8")
+    manager = DownloadManager(config=AppConfig(), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=queue_file, auto_start_worker=False)
+    assert manager.tasks == []
+    assert (tmp_path / "queue.json.bak").read_text(encoding="utf-8") == "[{broken"
+
+
+def test_crashing_worker_releases_its_slot(tmp_path, monkeypatch):
+    def boom(self, task):
+        raise OSError("disk full")
+
+    monkeypatch.setattr(DownloadManager, "_execute_download", boom)
+    manager = DownloadManager(config=AppConfig(max_concurrent_downloads=1), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=tmp_path / "q.json")
+    task = DownloadTask(id="crash", url="u", title="T")
+    manager.enqueue(task)
+    for _ in range(100):
+        if not manager.is_running("crash"):
+            break
+        threading.Event().wait(0.02)
+    assert task.status == DownloadStatus.ERROR
+    assert "disk full" in task.error_message
+    assert not manager.is_running("crash")
+    manager.shutdown()
+
+
+def test_quick_pause_resume_still_stops_the_old_run(tmp_path):
+    """is_paused is cleared by resume before the old thread's next tick; stop_requested is not."""
+    manager = DownloadManager(config=AppConfig(), history=HistoryManager(storage_path=tmp_path / "h.json"), queue_path=tmp_path / "q.json", auto_start_worker=False)
+    task = DownloadTask(id="pr", url="u", title="T", status=DownloadStatus.DOWNLOADING)
+    manager.tasks = [task]
+    manager._running.add("pr")  # an old run is still in flight
+    manager.pause_task("pr")
+    manager.resume_task("pr")
+    assert task.is_paused is False
+    assert task.stop_requested is True  # the old run will still raise DownloadCancelled
+    assert task.status == DownloadStatus.QUEUED

@@ -182,6 +182,8 @@ pip install -r requirements.txt
 #### 3. Launch the Application
 ```bash
 python app.py
+# or, equivalently
+python -m ytui
 ```
 
 **On Windows**, you can also double-click or run:
@@ -201,7 +203,7 @@ python app.py
 | **`Ctrl+J`** | Switch to **Download Queue Manager** screen |
 | **`Ctrl+Y`** | Switch to **Download History & Library** screen |
 | **`Ctrl+O`** | Switch to **Settings & Configuration** screen |
-| **`Ctrl+Q`** | Graceful exit (saves config and stops active workers) |
+| **`Ctrl+Q`** | Exit (the queue is saved; active downloads resume as *Interrupted* next launch) |
 
 ---
 
@@ -211,7 +213,7 @@ python app.py
 | **`Enter`** (in input) | Start extraction / YouTube search |
 | **`Up` / `Down`** | Navigate search results table |
 | **`Enter`** (on row) | Select video and open format selector |
-| **`Esc`** | Clear input / Return to previous state |
+| **`/`** | Focus the search input |
 
 ---
 
@@ -219,7 +221,7 @@ python app.py
 | Shortcut | Action |
 | :--- | :--- |
 | **`Left` / `Right`** (`h`/`l`) | Switch focus between Video and Audio columns |
-| **`Up` / `Down`** (`j`/`k`) | Navigate available format streams in active column |
+| **`Up` / `Down`** | Navigate available format streams in active column (clicking the selected format again downloads it) |
 | **`1` / `2` / `3` / `4`** | Select Preset: `1` Best, `2` 1080p, `3` Smallest, `4` Audio Only |
 | **`C`** | Cycle target container format (`MP4`, `MKV`, `WEBM`, etc.) |
 | **`Q`** | Cycle audio bitrate quality (`320k`, `256k`, `192k`, `128k`, `V0`) |
@@ -236,7 +238,7 @@ python app.py
 | **`Ctrl+A`** | Select all tracks |
 | **`Ctrl+D`** | Deselect all tracks |
 | **`I`** | Invert selection |
-| **`Left` / `Right`** | Switch focus between Tracks list and Format selector |
+| **`Left` / `Right`** (`h`/`l`) | Move focus between Tracks, Video and Audio panels |
 | **`Enter` / `D`** | Queue all selected tracks for download |
 | **`Esc`** | Cancel and return to search |
 
@@ -265,7 +267,7 @@ python app.py
 | **`F`** | Reveal file in Explorer / Finder |
 | **`R`** | Re-download URL with format selector |
 | **`D`** | Remove record from history |
-| **`C`** | Clear entire download history |
+| **`C`** (press twice) | Clear entire download history (files are kept) |
 
 ---
 
@@ -276,7 +278,7 @@ python app.py
 | **`Tab` / `Shift+Tab`** | Move focus between fields |
 | **`Left` / `Right`** | Cycle dropdown / selector values |
 | **`Ctrl+S`** | Save configuration |
-| **`Ctrl+R`** | Reset configuration to default values |
+| **`Ctrl+R`** | Load default values into the form (applied only when saved with `Ctrl+S`) |
 | **`Ctrl+U`** | Self-update yt-dlp to latest upstream version |
 | **`Esc`** | Discard unsaved changes and go back |
 
@@ -306,6 +308,9 @@ Configuration is automatically persisted to:
 - **Linux / macOS**: `~/.config/ytui/config.json`
 
 ### Sample `config.json`:
+`rate_limit` is bytes per second with an optional K/M/G suffix (`"500K"`, `"2M"`); `"0"` means unlimited.
+Invalid or hand-edited values are coerced or reset to defaults on load, and a corrupt file is kept as `config.json.bak`.
+
 ```json
 {
   "download_dir": "C:\\Users\\user\\Downloads",
@@ -313,6 +318,7 @@ Configuration is automatically persisted to:
   "max_concurrent_downloads": 3,
   "rate_limit": "0",
   "retries": 10,
+  "fragment_retries": 10,
   "continuedl": true,
   "browser_cookies": "none",
   "cookies_file": "",
@@ -327,6 +333,8 @@ Configuration is automatically persisted to:
   "remove_sponsor_segments": false,
   "sponsorblock_categories": "sponsor,selfpromo",
   "embed_metadata": true,
+  "ffmpeg_location": "",
+  "skip_ffmpeg_check": false,
   "proxy": "",
   "geo_bypass": true,
   "theme": "shadcn-zinc",
@@ -364,8 +372,32 @@ dist/yt-dlp-tui.exe
 The test suite covers configuration management, yt-dlp format extraction, download queue management, Arabic/RTL text rendering, and asynchronous Textual UI screens:
 
 ```bash
+pip install -e ".[dev]"
 python -m pytest tests/ -v
 ```
+
+Tests run against a temporary home directory, so they never touch your real config, history or queue.
+
+---
+
+## 🗂️ Project Structure
+
+```
+ytui/
+├── app.py              # App: screen navigation, apply_config(), startup checks
+├── config.py           # AppConfig dataclass (validated), atomic JSON persistence
+├── formats.py          # Pure format model: parsing, container rules, size estimates
+├── ytdlp_engine.py     # yt-dlp calls: search, extract, cookie test, download options, fallbacks
+├── manager.py          # Download queue: worker threads, pause/resume, persistence
+├── history.py          # Completed-download library
+├── ffmpeg_utils.py     # FFmpeg detection and installer
+├── rtl_utils.py        # Arabic/RTL shaping and markup escaping
+├── themes.py           # Theme definitions
+├── screens/            # One module per screen; selection.py is the shared format-picker base
+└── widgets/            # FormatColumnView, CycleSelect
+```
+
+Screens read the live `app.config`, `app.manager` and `app.history`; the queue exposes a `version` counter that screens poll, so download threads never block on the UI.
 
 ---
 

@@ -1,43 +1,45 @@
-"""Global pytest configuration and safety mocks to prevent real video downloads during tests."""
+"""Test isolation: no real downloads, no network extraction, and no writes to the user's config dir."""
 
-from typing import Any, Dict, Optional
+from typing import Any
+
 import pytest
 import yt_dlp
 
-from manager import DownloadManager, DownloadStatus, DownloadTask
-
+from ytui import config as config_module
+from ytui import ffmpeg_utils
+from ytui.manager import DownloadManager, DownloadTask
 
 ORIGINAL_EXECUTE_DOWNLOAD = DownloadManager._execute_download
+# Kept by reference: tests may monkeypatch the module attribute with a plain function.
+GET_CONFIG_DIR = config_module.get_config_dir
 
 
 @pytest.fixture(autouse=True)
-def prevent_real_downloads(monkeypatch):
-    """Safety fixture to guarantee no real video download or network extraction happens in tests."""
+def isolated_environment(monkeypatch, tmp_path):
+    # Config, history and queue files go to a per-test home directory.
+    home = tmp_path / "home"
+    home.mkdir()
+    for var in ("HOME", "USERPROFILE", "APPDATA", "LOCALAPPDATA"):
+        monkeypatch.setenv(var, str(home))
+    GET_CONFIG_DIR.cache_clear()
+    ffmpeg_utils.clear_ffmpeg_cache()
 
-    # 1. Mock DownloadManager._execute_download so worker threads never download videos
     def mock_execute_download(self, task: DownloadTask) -> None:
         pass
 
     monkeypatch.setattr(DownloadManager, "_execute_download", mock_execute_download)
 
-    # 2. Mock yt_dlp.YoutubeDL.download
     def mock_ytdlp_download(self, url_list: Any) -> int:
         return 0
 
     monkeypatch.setattr(yt_dlp.YoutubeDL, "download", mock_ytdlp_download)
 
-    # 3. Mock ffmpeg availability to True by default so tests start directly in SearchScreen
-    import ffmpeg_utils
-    import app
-    monkeypatch.setattr(ffmpeg_utils, "is_ffmpeg_available", lambda *args, **kwargs: True)
-    monkeypatch.setattr(app, "is_ffmpeg_available", lambda *args, **kwargs: True)
+    # Pretend FFmpeg exists so the app starts directly on the search screen.
+    import ytui.app
+
+    monkeypatch.setattr(ytui.app, "is_ffmpeg_available", lambda *args, **kwargs: True)
 
     yield
 
-    # Teardown: ensure DownloadManager singleton is cleanly shutdown
-    if DownloadManager._instance is not None:
-        try:
-            DownloadManager._instance.shutdown()
-        except Exception:
-            pass
-        DownloadManager._instance = None
+    GET_CONFIG_DIR.cache_clear()
+    ffmpeg_utils.clear_ffmpeg_cache()

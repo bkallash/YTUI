@@ -1,7 +1,23 @@
-"""Unit tests for ytdlp_engine module."""
+"""Unit tests for format parsing/estimation (ytui.formats) and yt-dlp integration (ytui.ytdlp_engine)."""
 
-from config import AppConfig
-from ytdlp_engine import FormatOption, YtDlpEngine, format_bytes, format_duration, is_url
+from ytui.config import AppConfig
+from ytui.formats import (
+    FormatOption,
+    SearchResultItem,
+    estimate_format_bitrates,
+    estimate_item_size,
+    estimate_playlist_size,
+    estimate_stream_sizes,
+    extract_audio_container_from_option,
+    extract_audio_quality_from_option,
+    extract_video_container_from_option,
+    format_bytes,
+    format_duration,
+    is_url,
+    parse_formats,
+    playlist_preset_formats,
+)
+from ytui.ytdlp_engine import YtDlpEngine
 
 
 def test_url_detection():
@@ -29,7 +45,7 @@ def test_parse_formats():
         {"format_id": "251", "vcodec": "none", "acodec": "opus", "abr": 160, "ext": "webm", "filesize": 5000000},
     ]
 
-    video_opts, audio_opts = YtDlpEngine._parse_formats(dummy_raw_formats)
+    video_opts, audio_opts = parse_formats(dummy_raw_formats)
 
     # Check special "No Video" and "No Audio" options
     assert any(opt.format_id == "none" and opt.format_type == "video" for opt in video_opts)
@@ -71,7 +87,7 @@ def test_build_download_options_resilience_and_settings():
     )
 
     assert opts["format"] == "137+140/best"
-    assert opts["ratelimit"] == "1M"
+    assert opts["ratelimit"] == 1024 * 1024  # yt-dlp needs bytes/s, not the "1M" string
     assert opts["retries"] == 15
     assert opts["fragment_retries"] == 15
     assert opts["continuedl"] is True
@@ -220,32 +236,13 @@ def test_resolve_output_filepath(tmp_path):
     assert YtDlpEngine.resolve_output_filepath(str(dummy_dotted_orig), container="mp3", is_audio_only=True) == str(f_dotted)
 
 
-def test_shorts_detection_and_urls():
-    from ytdlp_engine import is_shorts
-
-    # Shorts URLs
-    assert is_shorts("https://www.youtube.com/shorts/dQw4w9WgXcQ") is True
-    assert is_shorts("https://youtube.com/shorts/3xyz987") is True
-    assert is_shorts("http://youtu.be/shorts/abc-123_45") is True
-
-    # Standard video URLs
-    assert is_shorts("https://www.youtube.com/watch?v=dQw4w9WgXcQ") is False
-    assert is_shorts("https://youtu.be/dQw4w9WgXcQ") is False
-    assert is_shorts("https://vimeo.com/123456") is False
-
-    # Metadata dict detection
-    assert is_shorts("https://youtube.com/watch?v=1", info={"is_shorts": True}) is True
-    assert is_shorts("https://youtube.com/watch?v=1", info={"webpage_url": "https://www.youtube.com/shorts/1"}) is True
-    assert is_shorts("https://youtube.com/watch?v=1", info={"is_shorts": False, "webpage_url": "https://youtube.com/watch?v=1"}) is False
-
-
 def test_parse_formats_non_youtube_sites():
     # 1. Muxed formats (e.g. Vimeo, Twitter, direct MP4)
     muxed_fmts = [
         {"format_id": "http-1080p", "vcodec": "h264", "acodec": "aac", "height": 1080, "ext": "mp4", "filesize": 30000000},
         {"format_id": "http-720p", "vcodec": "h264", "acodec": "aac", "height": 720, "ext": "mp4", "filesize": 15000000},
     ]
-    v_opts, a_opts = YtDlpEngine._parse_formats(muxed_fmts)
+    v_opts, a_opts = parse_formats(muxed_fmts)
     assert any("1080p" in opt.label for opt in v_opts)
     assert any("720p" in opt.label for opt in v_opts)
 
@@ -254,7 +251,7 @@ def test_parse_formats_non_youtube_sites():
         {"format_id": "source", "vcodec": "avc1", "acodec": "mp4a", "height": None, "resolution": "1080x1920", "ext": "mp4"},
         {"format_id": "chunked", "vcodec": "avc1", "acodec": "mp4a", "height": None, "format_note": "720p60", "ext": "mp4"},
     ]
-    v_res, _ = YtDlpEngine._parse_formats(res_str_fmts)
+    v_res, _ = parse_formats(res_str_fmts)
     assert any("1080" in opt.label for opt in v_res)
     assert any("720" in opt.label for opt in v_res)
 
@@ -263,7 +260,7 @@ def test_parse_formats_non_youtube_sites():
         {"format_id": "http_mp3", "vcodec": "none", "acodec": "mp3", "abr": 128, "ext": "mp3"},
         {"format_id": "hls_opus", "vcodec": "none", "acodec": "opus", "tbr": 160, "ext": "opus"},
     ]
-    _, a_res = YtDlpEngine._parse_formats(audio_fmts)
+    _, a_res = parse_formats(audio_fmts)
     assert any("128 kbps" in opt.label for opt in a_res)
     assert any("160 kbps" in opt.label for opt in a_res)
 
@@ -286,37 +283,36 @@ def test_bitrate_and_size_estimation():
     fmt_no_audio = FormatOption(format_id="none", format_type="audio", label="[No Audio]", resolution="Muted", is_special=True)
 
     # 1. 1080p + 320k audio bitrate test
-    v_kbps, a_kbps, tot_kbps = YtDlpEngine.estimate_format_bitrates(fmt_1080p, fmt_audio_320)
+    v_kbps, a_kbps, tot_kbps = estimate_format_bitrates(fmt_1080p, fmt_audio_320)
     assert v_kbps == 5000.0
     assert a_kbps == 320.0
     assert tot_kbps == 5320.0
 
     # 2. Audio only mode
-    v_kbps, a_kbps, tot_kbps = YtDlpEngine.estimate_format_bitrates(fmt_no_video, fmt_audio_320, audio_quality="320")
+    v_kbps, a_kbps, tot_kbps = estimate_format_bitrates(fmt_no_video, fmt_audio_320, audio_quality="320")
     assert v_kbps == 0.0
     assert a_kbps == 320.0
     assert tot_kbps == 320.0
 
     # 3. Video only mode
-    v_kbps, a_kbps, tot_kbps = YtDlpEngine.estimate_format_bitrates(fmt_720p, fmt_no_audio)
+    v_kbps, a_kbps, tot_kbps = estimate_format_bitrates(fmt_720p, fmt_no_audio)
     assert v_kbps == 2500.0
     assert a_kbps == 0.0
     assert tot_kbps == 2500.0
 
     # 4. Item size estimation for 60 seconds of 1080p (5320 kbps)
     # bytes = (5320 * 1000 / 8) * 60 = 665000 * 60 = 39,900,000 bytes (~39.9 MB)
-    est_bytes = YtDlpEngine.estimate_item_size(60, fmt_1080p, fmt_audio_320)
+    est_bytes = estimate_item_size(60, fmt_1080p, fmt_audio_320)
     assert 39_000_000 <= est_bytes <= 41_000_000
 
     # 5. Playlist size estimation across 3 items
-    from ytdlp_engine import SearchResultItem
     items = [
         SearchResultItem(id="1", title="Track 1", url="https://youtube.com/1", uploader="Artist", duration=60, duration_str="01:00", playlist_index=1),
         SearchResultItem(id="2", title="Track 2", url="https://youtube.com/2", uploader="Artist", duration=120, duration_str="02:00", playlist_index=2),
         SearchResultItem(id="3", title="Track 3", url="https://youtube.com/3", uploader="Artist", duration=180, duration_str="03:00", playlist_index=3),
     ]
 
-    total_bytes, total_secs = YtDlpEngine.estimate_playlist_size(items, fmt_1080p, fmt_audio_320)
+    total_bytes, total_secs = estimate_playlist_size(items, fmt_1080p, fmt_audio_320)
     assert total_secs == 360  # 60 + 120 + 180
     assert total_bytes > 0
     # Expected bytes for 360 seconds at 5320 kbps = ~239.4 MB
@@ -324,7 +320,7 @@ def test_bitrate_and_size_estimation():
 
 
 def test_playlist_fallback_formats():
-    v_opts, a_opts = YtDlpEngine._get_playlist_fallback_formats()
+    v_opts, a_opts = playlist_preset_formats()
     assert any(opt.format_id == "none" for opt in v_opts)
     assert any("2160p" in opt.label or "4K" in opt.label for opt in v_opts)
     assert any("1080p" in opt.label for opt in v_opts)
@@ -382,12 +378,6 @@ def test_cookie_setup_browser_errors(monkeypatch):
 
 
 def test_extract_audio_quality_and_containers():
-    from ytdlp_engine import (
-        extract_audio_container_from_option,
-        extract_audio_quality_from_option,
-        extract_video_container_from_option,
-    )
-
     # 1. Video containers
     v_mp4 = FormatOption(format_id="137", format_type="video", label="1080p [MP4]", resolution="1080p", ext="mp4")
     v_webm = FormatOption(format_id="248", format_type="video", label="1080p [WEBM]", resolution="1080p", ext="webm")
@@ -462,7 +452,7 @@ def test_parse_formats_multi_language_and_surround_audio():
         {"format_id": "258", "vcodec": "none", "acodec": "mp4a.40.2", "abr": 384, "ext": "m4a", "audio_channels": 6},
     ]
 
-    v_opts, a_opts = YtDlpEngine._parse_formats(formats)
+    v_opts, a_opts = parse_formats(formats)
 
     # Video column only has 1080p, no audio formats
     assert any(opt.format_id == "137" for opt in v_opts)
@@ -474,3 +464,66 @@ def test_parse_formats_multi_language_and_surround_audio():
     assert any(opt.format_id == "251-es" and "[ES]" in opt.label for opt in a_opts)
 
 
+
+
+def test_external_subtitles_are_converted_to_srt():
+    config = AppConfig(download_dir="~/TestDownloads", download_subtitles=True, subtitle_mode="external")
+    opts = YtDlpEngine.build_download_options(config=config, video_format_id="137", audio_format_id="140", target_container="mp4")
+    pps = opts["postprocessors"]
+    assert {"key": "FFmpegSubtitlesConvertor", "format": "srt", "when": "before_dl"} in pps
+    assert not any(pp["key"] == "FFmpegEmbedSubtitle" for pp in pps)
+
+
+def test_chapters_are_embedded_without_metadata():
+    config = AppConfig(download_dir="~/TestDownloads", embed_metadata=False, embed_chapters=True)
+    opts = YtDlpEngine.build_download_options(config=config, video_format_id="137", audio_format_id="140")
+    meta = next(pp for pp in opts["postprocessors"] if pp["key"] == "FFmpegMetadata")
+    assert meta["add_chapters"] is True and meta["add_metadata"] is False
+
+
+def test_geo_bypass_can_be_disabled():
+    opts = YtDlpEngine.base_options(AppConfig(geo_bypass=False))
+    assert opts["geo_bypass"] is False
+
+
+def test_run_with_fallbacks_drops_cookies_only_for_cookie_errors(monkeypatch):
+    import yt_dlp
+
+    seen = []
+
+    class FakeYDL:
+        def __init__(self, opts):
+            self.opts = opts
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr(yt_dlp, "YoutubeDL", FakeYDL)
+
+    def action(ydl):
+        seen.append("cookiesfrombrowser" in ydl.opts)
+        if "cookiesfrombrowser" in ydl.opts:
+            raise yt_dlp.utils.DownloadError("Could not copy Chrome cookie database")
+        return "ok"
+
+    assert YtDlpEngine.run_with_fallbacks({"cookiesfrombrowser": ("chrome",)}, action) == "ok"
+    assert seen == [True, False]
+
+    # A private-video error is not a cookie problem: no cookie-less retry, no client fallbacks
+    def private(ydl):
+        seen.append("private")
+        raise yt_dlp.utils.DownloadError("Private video")
+
+    seen.clear()
+    import pytest
+    with pytest.raises(yt_dlp.utils.DownloadError):
+        YtDlpEngine.run_with_fallbacks({"cookiesfrombrowser": ("chrome",)}, private)
+    assert seen == ["private"]
+
+
+def test_estimate_stream_sizes_prefers_real_filesizes():
+    video = FormatOption(format_id="137", format_type="video", label="1080p", resolution="1080p", height=1080, filesize=50_000_000)
+    audio = FormatOption(format_id="140", format_type="audio", label="128 kbps", resolution="128k", tbr=128)
+    assert estimate_stream_sizes(video, audio, duration=60) == (50_000_000, 128 * 125 * 60)
+    assert estimate_stream_sizes(video, audio, duration=None) == (50_000_000, 0)

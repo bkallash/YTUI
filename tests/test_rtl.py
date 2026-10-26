@@ -3,7 +3,7 @@
 import pytest
 from rich.text import Text
 
-from rtl_utils import _fix_rtl_cached, fix_rtl, get_rtl_mode, has_rtl, render_rtl_text, rtl_truncate, set_rtl_mode
+from ytui.rtl_utils import _fix_rtl_cached, fix_rtl, get_rtl_mode, has_rtl, render_rtl_text, rtl_truncate, set_rtl_mode
 
 
 def test_rtl_caching():
@@ -143,9 +143,9 @@ def test_render_rtl_text():
 @pytest.mark.asyncio
 async def test_tui_arabic_search_results_rendering():
     """Verify that Arabic titles in SearchScreen are rendered using RTL shaping in the DataTable."""
-    from app import YtDlpApp
-    from screens.search_screen import SearchScreen
-    from ytdlp_engine import SearchResultItem
+    from ytui.app import YtDlpApp
+    from ytui.screens.search_screen import SearchScreen
+    from ytui.formats import SearchResultItem
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -181,18 +181,18 @@ async def test_tui_arabic_search_results_rendering():
         assert table.row_count == 2
 
         # Verify the table contains reshaped RTL text
-        row_0 = table.get_row("https://youtube.com/watch?v=ar1")
-        # Column 1 is Title, Column 2 is Channel
-        assert row_0[1] == rtl_truncate(arabic_items[0].title, max_len=max(35, screen.size.width - 52))
-        assert row_0[2] == rtl_truncate(arabic_items[0].uploader, max_len=max(18, min(35, screen.size.width // 5)))
+        row_0 = table.get_row_at(0)
+        # Column 1 is Title, Column 2 is Channel; text is truncated to the column width before shaping
+        assert row_0[1] == rtl_truncate(arabic_items[0].title, max_len=table.columns["title"].width)
+        assert row_0[2] == rtl_truncate(arabic_items[0].uploader, max_len=table.columns["channel"].width)
 
 
 @pytest.mark.asyncio
 async def test_tui_arabic_download_queue_rendering():
     """Verify that Arabic titles in DownloadScreen are rendered correctly in the queue table and inspector."""
-    from app import YtDlpApp
-    from manager import DownloadStatus, DownloadTask
-    from screens.download_screen import DownloadScreen
+    from ytui.app import YtDlpApp
+    from ytui.manager import DownloadStatus, DownloadTask
+    from ytui.screens.download_screen import DownloadScreen
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -223,3 +223,18 @@ async def test_tui_arabic_download_queue_rendering():
         # Verify title line contains reshaped Arabic title
         expected_reshaped_title = fix_rtl(ar_task.title)
         assert expected_reshaped_title in str(lbl_title.render())
+
+
+@pytest.mark.parametrize("text", [
+    "Song [Official Video]",
+    r"C:\music\Song [dQw4w9WgXcQ].mp4",
+    "trailing backslash\\",
+    "[bold]not a tag[/]",
+    "x [ y",
+])
+def test_escape_markup_keeps_text_literal(text):
+    from textual.markup import to_content
+    from ytui.rtl_utils import escape_markup
+
+    rendered = str(to_content(f"[bold]{escape_markup(text)}[/] tail")).replace("\u200b", "")
+    assert rendered == f"{text} tail"

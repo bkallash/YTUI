@@ -1,47 +1,26 @@
-"""Script to programmatically generate crisp SVG screenshots for README documentation."""
+"""Generate the SVG screenshots used in README.md (run from the repository root)."""
 
 import asyncio
-from pathlib import Path
+import os
 import sys
+import tempfile
+from pathlib import Path
+from typing import List
 
 # Ensure repository root is in sys.path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from config import AppConfig
-from history import HistoryManager
-from manager import DownloadManager, DownloadStatus, DownloadTask
-from screens.download_screen import DownloadScreen
-from screens.format_screen import FormatScreen
-from screens.settings_screen import SettingsScreen
-from textual.app import App
-from ytdlp_engine import ExtractionResult, FormatOption
+# Point config/history/queue at a throwaway home so screenshots never touch real settings.
+_TMP_HOME = tempfile.mkdtemp(prefix="ytui-screens-")
+for _var in ("HOME", "USERPROFILE", "APPDATA"):
+    os.environ[_var] = _TMP_HOME
 
+from ytui.app import YtDlpApp  # noqa: E402
+from ytui.formats import ExtractionResult, FormatOption  # noqa: E402
+from ytui.manager import DownloadManager, DownloadStatus, DownloadTask  # noqa: E402
+from ytui.screens.format_screen import FormatScreen  # noqa: E402
 
-class ScreenshotApp(App):
-    """Container app to host individual screens for screenshot capture."""
-
-    ENABLE_COMMAND_PALETTE = False
-    CSS = """
-    Screen {
-        background: $background;
-        color: $foreground;
-        layout: vertical;
-        width: 100%;
-        height: 100%;
-        margin: 0;
-        padding: 0;
-    }
-    """
-
-    def __init__(self, target_screen, **kwargs):
-        super().__init__(**kwargs)
-        self.target_screen = target_screen
-
-    def on_mount(self) -> None:
-        from themes import register_all_themes
-        register_all_themes(self)
-        self.theme = "shadcn-zinc"
-        self.push_screen(self.target_screen)
+SIZE = (116, 34)
 
 
 def create_demo_extraction() -> ExtractionResult:
@@ -213,13 +192,8 @@ def create_demo_extraction() -> ExtractionResult:
     )
 
 
-def setup_demo_download_manager(tmp_path: Path) -> DownloadManager:
-    """Populate singleton download manager for download queue screenshot."""
-    config = AppConfig()
-    hist_mgr = HistoryManager(storage_path=tmp_path / "history.json")
-    DownloadManager._instance = None
-    manager = DownloadManager.get_instance(config=config, history=hist_mgr, queue_path=tmp_path / "queue.json")
-
+def demo_tasks() -> List[DownloadTask]:
+    """Representative queue entries for the download queue screenshot."""
     # Active Task 1: 4K Video Downloading
     t1 = DownloadTask(
         id="a1b2c3d4",
@@ -306,54 +280,35 @@ def setup_demo_download_manager(tmp_path: Path) -> DownloadManager:
         eta_str="--",
     )
 
-    manager.tasks = [t1, t2, t3, t4]
-    return manager
+    return [t1, t2, t3, t4]
 
 
-async def generate_all_screenshots():
-    """Render and capture each screen to SVG format."""
+async def generate_all_screenshots() -> None:
+    """Render each screen of the real app and save it as SVG."""
     assets_dir = Path("assets")
     assets_dir.mkdir(exist_ok=True)
-    tmp_dir = Path("build/tmp_screenshots")
-    tmp_dir.mkdir(parents=True, exist_ok=True)
+    DownloadManager._execute_download = lambda self, task: None  # never download while capturing
 
-    config = AppConfig.load()
-
-    # 1. Format Matrix Screen
-    print("Generating format_screen.svg...")
-    extraction = create_demo_extraction()
-    format_screen = FormatScreen(extraction=extraction, config=config)
-    app1 = ScreenshotApp(format_screen)
-    async with app1.run_test(size=(116, 34)) as pilot:
+    app = YtDlpApp()
+    async with app.run_test(size=SIZE) as pilot:
+        app.config.skip_ffmpeg_check = True
         await pilot.pause(0.5)
-        svg_format = app1.export_screenshot()
-        (assets_dir / "format_screen.svg").write_text(svg_format, encoding="utf-8")
 
-    # 2. Download Queue Screen
-    print("Generating download_screen.svg...")
-    setup_demo_download_manager(tmp_dir)
-    download_screen = DownloadScreen(config=config)
-    app2 = ScreenshotApp(download_screen)
-    async with app2.run_test(size=(116, 34)) as pilot:
+        print("Generating format_screen.svg...")
+        app.push_screen(FormatScreen(create_demo_extraction()))
         await pilot.pause(0.5)
-        try:
-            table = download_screen.query_one("#queue-table")
-            if table.row_count > 0:
-                table.cursor_coordinate = (0, 0)
-        except Exception:
-            pass
-        await pilot.pause(0.3)
-        svg_download = app2.export_screenshot()
-        (assets_dir / "download_screen.svg").write_text(svg_download, encoding="utf-8")
+        (assets_dir / "format_screen.svg").write_text(app.export_screenshot(), encoding="utf-8")
 
-    # 3. Settings Screen
-    print("Generating settings_screen.svg...")
-    settings_screen = SettingsScreen(config=config)
-    app3 = ScreenshotApp(settings_screen)
-    async with app3.run_test(size=(116, 34)) as pilot:
+        print("Generating download_screen.svg...")
+        app.manager.tasks = demo_tasks()
+        await pilot.press("ctrl+j")
         await pilot.pause(0.5)
-        svg_settings = app3.export_screenshot()
-        (assets_dir / "settings_screen.svg").write_text(svg_settings, encoding="utf-8")
+        (assets_dir / "download_screen.svg").write_text(app.export_screenshot(), encoding="utf-8")
+
+        print("Generating settings_screen.svg...")
+        await pilot.press("ctrl+o")
+        await pilot.pause(0.5)
+        (assets_dir / "settings_screen.svg").write_text(app.export_screenshot(), encoding="utf-8")
 
     print("All 3 screenshots generated successfully in assets/!")
 

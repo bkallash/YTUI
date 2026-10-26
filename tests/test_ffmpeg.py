@@ -9,14 +9,14 @@ from unittest.mock import MagicMock, patch
 import pytest
 from textual.widgets import Button, Checkbox, Label, ProgressBar
 
-from app import YtDlpApp
-from config import AppConfig
-import ffmpeg_utils
-from screens.ffmpeg_modal import FfmpegSetupModal
+from ytui.app import YtDlpApp
+from ytui.config import AppConfig
+from ytui import ffmpeg_utils
+from ytui.screens.ffmpeg_modal import FfmpegSetupModal
 
 
 def test_get_ffmpeg_bin_dir(tmp_path, monkeypatch):
-    monkeypatch.setattr("ffmpeg_utils.get_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("ytui.ffmpeg_utils.get_config_dir", lambda: tmp_path)
     bin_dir = ffmpeg_utils.get_ffmpeg_bin_dir()
     assert bin_dir.exists()
     assert bin_dir == tmp_path / "bin"
@@ -33,7 +33,7 @@ def test_find_binary_custom_dir(tmp_path):
 
 def test_find_binary_not_found(tmp_path, monkeypatch):
     monkeypatch.setattr("shutil.which", lambda x: None)
-    monkeypatch.setattr("ffmpeg_utils.get_ffmpeg_bin_dir", lambda: tmp_path / "nonexistent")
+    monkeypatch.setattr("ytui.ffmpeg_utils.get_ffmpeg_bin_dir", lambda: tmp_path / "nonexistent")
     assert ffmpeg_utils.find_binary("nonexistent_tool_12345") is None
 
 
@@ -96,7 +96,7 @@ def test_download_and_install_ffmpeg_mocked(tmp_path, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_ffmpeg_modal_skip(monkeypatch, tmp_path):
-    monkeypatch.setattr("config.get_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("ytui.config.get_config_dir", lambda: tmp_path)
     app = YtDlpApp()
     async with app.run_test() as pilot:
         modal = FfmpegSetupModal(is_first_launch=True)
@@ -116,7 +116,7 @@ async def test_ffmpeg_modal_skip(monkeypatch, tmp_path):
 
 @pytest.mark.asyncio
 async def test_ffmpeg_modal_download_success(monkeypatch, tmp_path):
-    monkeypatch.setattr("config.get_config_dir", lambda: tmp_path)
+    monkeypatch.setattr("ytui.config.get_config_dir", lambda: tmp_path)
     monkeypatch.setattr(ffmpeg_utils, "download_and_install_ffmpeg", lambda progress_callback=None: (True, "Installed!"))
     monkeypatch.setattr(ffmpeg_utils, "get_ffmpeg_bin_dir", lambda: tmp_path / "bin")
 
@@ -132,3 +132,49 @@ async def test_ffmpeg_modal_download_success(monkeypatch, tmp_path):
 
         # Wait for callback execution
         assert modal._is_downloading is True
+
+
+def test_install_from_tar_xz_archive(tmp_path, monkeypatch):
+    """Linux builds ship as .tar.xz; the installer used to only understand zip and always failed there."""
+    import tarfile
+
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    monkeypatch.setattr(ffmpeg_utils, "get_ffmpeg_bin_dir", lambda: bin_dir)
+    monkeypatch.setattr(ffmpeg_utils, "_platform_key", lambda: "linux64")
+    monkeypatch.setattr(ffmpeg_utils, "_get_binary_name", lambda name: name)
+
+    buffer = io.BytesIO()
+    with tarfile.open(fileobj=buffer, mode="w:xz") as tf:
+        for name in ("ffmpeg", "ffprobe", "README.txt"):
+            data = f"{name} content".encode()
+            info = tarfile.TarInfo(f"ffmpeg-master-linux64-gpl/bin/{name}")
+            info.size = len(data)
+            tf.addfile(info, io.BytesIO(data))
+    payload = buffer.getvalue()
+
+    class MockResponse(io.BytesIO):
+        headers = {"content-length": str(len(payload))}
+        def __enter__(self):
+            return self
+        def __exit__(self, *args):
+            pass
+
+    monkeypatch.setattr("urllib.request.urlopen", lambda req, timeout=30: MockResponse(payload))
+    success, msg = ffmpeg_utils.download_and_install_ffmpeg()
+    assert success, msg
+    assert (bin_dir / "ffmpeg").read_bytes() == b"ffmpeg content"
+    assert (bin_dir / "ffprobe").exists()
+    assert not (bin_dir / "README.txt").exists()
+
+
+@pytest.mark.asyncio
+async def test_ffmpeg_modal_escape_dismisses():
+    # The binding used to name a non-existent action ('action_action_skip'), so Esc did nothing.
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await app.push_screen(FfmpegSetupModal(is_first_launch=True))
+        await pilot.pause()
+        await pilot.press("escape")
+        await pilot.pause()
+        assert not isinstance(app.screen, FfmpegSetupModal)

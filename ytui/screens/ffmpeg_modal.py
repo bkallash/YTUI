@@ -3,25 +3,19 @@
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Center, Container, Horizontal, Middle, Vertical
+from textual.containers import Center, Horizontal, Middle, Vertical
 from textual.screen import ModalScreen
 from textual.widgets import Button, Checkbox, Label, ProgressBar, Static
 
-from config import AppConfig
-from ffmpeg_utils import (
-    download_and_install_ffmpeg,
-    ensure_ffmpeg_in_path,
-    find_ffmpeg,
-    get_ffmpeg_bin_dir,
-    is_ffmpeg_available,
-)
+from .. import ffmpeg_utils
+from ..rtl_utils import markup_safe
 
 
 class FfmpegSetupModal(ModalScreen[bool]):
     """Clean, high-contrast modal dialog to guide users through FFmpeg installation."""
 
     BINDINGS = [
-        Binding("escape", "action_skip", "Skip / Dismiss", show=True),
+        Binding("escape", "skip", "Skip / Dismiss", show=True),
     ]
 
     DEFAULT_CSS = """
@@ -209,14 +203,8 @@ class FfmpegSetupModal(ModalScreen[bool]):
     def action_skip(self) -> None:
         if self._is_downloading:
             return
-        try:
-            chk = self.query_one("#chk-dont-ask", Checkbox)
-            if chk.value:
-                config = AppConfig.load()
-                config.skip_ffmpeg_check = True
-                config.save()
-        except Exception:
-            pass
+        if self.query_one("#chk-dont-ask", Checkbox).value:
+            self.app.apply_config(self.app.config.replace(skip_ffmpeg_check=True))
         self.dismiss(False)
 
     def start_download(self) -> None:
@@ -224,17 +212,11 @@ class FfmpegSetupModal(ModalScreen[bool]):
             return
         self._is_downloading = True
 
-        # Update UI states
-        try:
-            btn_dl = self.query_one("#btn-download-ffmpeg", Button)
-            btn_dl.disabled = True
-            btn_skip = self.query_one("#btn-skip-ffmpeg", Button)
-            btn_skip.disabled = True
-            progress_bar = self.query_one("#ffmpeg-progress", ProgressBar)
-            progress_bar.add_class("visible")
-            progress_bar.update(progress=0)
-        except Exception:
-            pass
+        self.query_one("#btn-download-ffmpeg", Button).disabled = True
+        self.query_one("#btn-skip-ffmpeg", Button).disabled = True
+        progress_bar = self.query_one("#ffmpeg-progress", ProgressBar)
+        progress_bar.add_class("visible")
+        progress_bar.update(progress=0)
 
         self._run_ffmpeg_installer()
 
@@ -243,16 +225,10 @@ class FfmpegSetupModal(ModalScreen[bool]):
         def on_progress(downloaded: int, total: int, percent: float, msg: str) -> None:
             self.app.call_from_thread(self._update_progress_ui, percent, msg)
 
-        success, message = download_and_install_ffmpeg(progress_callback=on_progress)
+        # Looked up on the module at call time so tests can substitute the installer.
+        success, message = ffmpeg_utils.download_and_install_ffmpeg(progress_callback=on_progress)
 
         if success:
-            bin_dir = str(get_ffmpeg_bin_dir())
-            ensure_ffmpeg_in_path()
-            config = AppConfig.load()
-            config.ffmpeg_location = bin_dir
-            config.skip_ffmpeg_check = False
-            config.save()
-
             self.app.call_from_thread(self._on_install_success, message)
         else:
             self.app.call_from_thread(self._on_install_failure, message)
@@ -260,7 +236,7 @@ class FfmpegSetupModal(ModalScreen[bool]):
     def _update_progress_ui(self, percent: float, msg: str) -> None:
         try:
             lbl = self.query_one("#ffmpeg-status-label", Label)
-            lbl.update(f"⏳ {msg}")
+            lbl.update(f"⏳ {markup_safe(msg)}")
             lbl.styles.color = "#38bdf8"
             progress_bar = self.query_one("#ffmpeg-progress", ProgressBar)
             progress_bar.update(progress=min(100.0, max(0.0, percent)))
@@ -268,6 +244,9 @@ class FfmpegSetupModal(ModalScreen[bool]):
             pass
 
     def _on_install_success(self, message: str) -> None:
+        self.app.apply_config(self.app.config.replace(ffmpeg_location=str(ffmpeg_utils.get_ffmpeg_bin_dir()), skip_ffmpeg_check=False))
+        if not self.is_attached:  # dialog was closed by navigating away mid-install
+            return
         try:
             lbl = self.query_one("#ffmpeg-status-label", Label)
             lbl.update("✅ FFmpeg downloaded & installed successfully!")
@@ -282,9 +261,11 @@ class FfmpegSetupModal(ModalScreen[bool]):
 
     def _on_install_failure(self, error_message: str) -> None:
         self._is_downloading = False
+        if not self.is_attached:
+            return
         try:
             lbl = self.query_one("#ffmpeg-status-label", Label)
-            lbl.update(f"❌ Installation Failed: {error_message[:60]}")
+            lbl.update(f"❌ Installation Failed: {markup_safe(error_message[:60])}")
             lbl.styles.color = "#f43f5e"
             btn_dl = self.query_one("#btn-download-ffmpeg", Button)
             btn_dl.disabled = False
@@ -293,4 +274,4 @@ class FfmpegSetupModal(ModalScreen[bool]):
             btn_skip.disabled = False
         except Exception:
             pass
-        self.app.notify(f"Could not download FFmpeg: {error_message}", title="Install Failed", severity="error")
+        self.app.notify(f"Could not download FFmpeg: {markup_safe(error_message)}", title="Install Failed", severity="error")

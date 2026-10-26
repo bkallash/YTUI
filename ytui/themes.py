@@ -1,6 +1,6 @@
 """Theme profiles and color systems for YTUI."""
 
-from typing import Dict, List, Optional, Tuple
+from typing import List, Tuple
 from textual.app import App
 from textual.theme import Theme
 

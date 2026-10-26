@@ -61,21 +61,8 @@ Repository = "https://github.com/bkallash/YTUI"
 Issues = "https://github.com/bkallash/YTUI/issues"
 
 [project.scripts]
-ytui = "app:main"
-yt-dlp-tui = "app:main"
+ytui = "ytui.app:main"
+yt-dlp-tui = "ytui.app:main"
 
-[tool.setuptools]
-py-modules = [
-    "app",
-    "config",
-    "ffmpeg_utils",
-    "history",
-    "manager",
-    "rtl_utils",
-    "themes",
-    "ytdlp_engine"
-]
-packages = [
-    "screens",
-    "widgets"
-]
+[tool.setuptools.packages.find]
+include = ["ytui*"]

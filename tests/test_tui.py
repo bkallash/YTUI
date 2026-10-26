@@ -5,13 +5,13 @@ from textual.pilot import Pilot
 from textual.widgets import DataTable, Footer, Header, Input, Label, ListView, RichLog
 
 
-from app import YtDlpApp
-from screens.download_screen import DownloadScreen
-from screens.format_screen import FormatScreen
-from screens.history_screen import HistoryScreen
-from screens.search_screen import SearchScreen
-from screens.settings_screen import SettingsScreen
-from ytdlp_engine import ExtractionResult, FormatOption
+from ytui.app import YtDlpApp
+from ytui.screens.download_screen import DownloadScreen
+from ytui.screens.format_screen import FormatScreen
+from ytui.screens.history_screen import HistoryScreen
+from ytui.screens.search_screen import SearchScreen
+from ytui.screens.settings_screen import SettingsScreen
+from ytui.formats import ExtractionResult, FormatOption
 
 
 @pytest.mark.asyncio
@@ -46,7 +46,7 @@ async def test_app_startup_and_navigation():
 @pytest.fixture(autouse=True)
 def disable_download_execution(monkeypatch):
     """Ensure no background yt-dlp download is ever executed during TUI tests."""
-    monkeypatch.setattr("manager.DownloadManager._execute_download", lambda self, task: None)
+    monkeypatch.setattr("ytui.manager.DownloadManager._execute_download", lambda self, task: None)
 
 
 @pytest.mark.asyncio
@@ -71,7 +71,7 @@ async def test_format_screen_navigation():
             ],
         )
 
-        format_screen = FormatScreen(extraction, config=app.config)
+        format_screen = FormatScreen(extraction)
         app.push_screen(format_screen)
         await pilot.pause()
 
@@ -108,7 +108,7 @@ async def test_download_screen_keybindings_and_actions():
         assert isinstance(dl_screen, DownloadScreen)
 
         # Set isolated dummy task
-        from manager import DownloadStatus, DownloadTask
+        from ytui.manager import DownloadStatus, DownloadTask
         task = DownloadTask(id="ui-test-1", url="https://youtube.com/1", title="UI Test Task", status=DownloadStatus.PAUSED)
         app.manager.tasks = [task]
         dl_screen.selected_task_id = "ui-test-1"
@@ -161,7 +161,7 @@ async def test_ctrl_y_navigation_from_downloads_screen_does_not_delete_items():
 
         assert isinstance(app.screen, DownloadScreen)
 
-        from manager import DownloadStatus, DownloadTask
+        from ytui.manager import DownloadStatus, DownloadTask
         task1 = DownloadTask(id="task-keep-1", url="https://youtube.com/1", title="Task 1", status=DownloadStatus.DOWNLOADING)
         task2 = DownloadTask(id="task-keep-2", url="https://youtube.com/2", title="Task 2", status=DownloadStatus.QUEUED)
         app.manager.tasks = [task1, task2]
@@ -235,7 +235,7 @@ async def test_settings_screen_categories():
 @pytest.mark.asyncio
 async def test_history_screen_keybindings_and_actions(tmp_path):
     """Verify HistoryScreen keybindings, item selection, and operations."""
-    from history import HistoryItem, HistoryManager
+    from ytui.history import HistoryItem, HistoryManager
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -276,7 +276,7 @@ async def test_history_screen_keybindings_and_actions(tmp_path):
 @pytest.mark.asyncio
 async def test_history_screen_search_filtering(tmp_path):
     """Verify live search filtering in HistoryScreen."""
-    from history import HistoryItem, HistoryManager
+    from ytui.history import HistoryItem, HistoryManager
     from textual.widgets import Input, DataTable
 
     app = YtDlpApp()
@@ -366,7 +366,7 @@ async def test_format_screen_presets_and_container_cycling():
             ],
         )
 
-        fmt_screen = FormatScreen(extraction, config=app.config)
+        fmt_screen = FormatScreen(extraction)
         app.push_screen(fmt_screen)
         await pilot.pause()
 
@@ -374,19 +374,10 @@ async def test_format_screen_presets_and_container_cycling():
         keys_bar = fmt_screen.query_one("#format-keys-bar", Label)
         assert "Container: .MP4" in str(keys_bar.render())
 
-        # Verify presets are hidden from bottom footer, and screen navigation keys are shown
-        bindings_map = {b.key: b for b in fmt_screen.BINDINGS}
-        assert bindings_map["1"].show is False
-        assert bindings_map["2"].show is False
-        assert bindings_map["3"].show is False
-        assert bindings_map["4"].show is False
-        assert bindings_map["enter"].show is False
-        assert bindings_map["escape"].show is True
-        assert bindings_map["ctrl+s"].show is True
-        assert bindings_map["ctrl+j"].show is True
-        assert bindings_map["ctrl+y"].show is True
-        assert bindings_map["ctrl+o"].show is True
-        assert bindings_map["ctrl+q"].show is True
+        # Presets stay out of the footer (they are in the toolbar); Back and app navigation are shown
+        shown = {key for key, active in fmt_screen.active_bindings.items() if active.binding.show}
+        assert not shown & {"1", "2", "3", "4", "enter"}
+        assert {"escape", "ctrl+s", "ctrl+j", "ctrl+y", "ctrl+o", "ctrl+q"} <= shown
 
         # Preset 4: Audio only (MP3)
         await pilot.press("4")
@@ -510,8 +501,8 @@ async def test_settings_screen_category_sidebar_and_navigation():
 @pytest.mark.asyncio
 async def test_playlist_screen_track_selection_and_presets():
     """Verify PlaylistScreen track toggling, dynamic size estimates, and preset activations."""
-    from screens.playlist_screen import PlaylistScreen
-    from ytdlp_engine import SearchResultItem
+    from ytui.screens.playlist_screen import PlaylistScreen
+    from ytui.formats import SearchResultItem
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -547,7 +538,7 @@ async def test_playlist_screen_track_selection_and_presets():
             audio_formats=audio_formats,
         )
 
-        pl_screen = PlaylistScreen(extraction, config=app.config)
+        pl_screen = PlaylistScreen(extraction)
         app.push_screen(pl_screen)
         await pilot.pause()
 
@@ -616,8 +607,8 @@ async def test_playlist_screen_track_selection_and_presets():
 @pytest.mark.asyncio
 async def test_playlist_strict_sequential_order_queueing():
     """Verify that when downloading a playlist, tasks are enqueued in strict ascending playlist order (1..N)."""
-    from screens.playlist_screen import PlaylistScreen
-    from ytdlp_engine import SearchResultItem
+    from ytui.screens.playlist_screen import PlaylistScreen
+    from ytui.formats import SearchResultItem
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -646,7 +637,7 @@ async def test_playlist_strict_sequential_order_queueing():
             ],
         )
 
-        pl_screen = PlaylistScreen(extraction, config=app.config)
+        pl_screen = PlaylistScreen(extraction)
         app.push_screen(pl_screen)
         await pilot.pause()
 
@@ -674,7 +665,7 @@ async def test_playlist_strict_sequential_order_queueing():
 
 @pytest.mark.asyncio
 async def test_format_screen_edit_existing_task():
-    from manager import DownloadStatus, DownloadTask
+    from ytui.manager import DownloadStatus, DownloadTask
     app = YtDlpApp()
     async with app.run_test() as pilot:
         await pilot.pause()
@@ -708,7 +699,7 @@ async def test_format_screen_edit_existing_task():
             ],
         )
 
-        fmt_screen = FormatScreen(extraction, config=app.config, editing_task_id="task-to-edit")
+        fmt_screen = FormatScreen(extraction, editing_task_id="task-to-edit")
         app.push_screen(fmt_screen)
         await pilot.pause()
 
@@ -755,8 +746,8 @@ async def test_settings_screen_cookie_test_button():
 
 @pytest.mark.asyncio
 async def test_history_screen_case_insensitive_search(tmp_path):
-    from history import HistoryItem, HistoryManager
-    from screens.history_screen import HistoryScreen
+    from ytui.history import HistoryItem, HistoryManager
+    from ytui.screens.history_screen import HistoryScreen
     from textual.widgets import DataTable, Input
 
     hist_file = tmp_path / "test_hist.json"
@@ -828,7 +819,7 @@ async def test_history_screen_case_insensitive_search(tmp_path):
 @pytest.mark.asyncio
 async def test_search_screen_resize_with_results():
     """Verify SearchScreen on_resize correctly updates columns and populates search results."""
-    from ytdlp_engine import SearchResultItem
+    from ytui.formats import SearchResultItem
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -858,7 +849,7 @@ async def test_search_screen_resize_with_results():
 @pytest.mark.asyncio
 async def test_history_screen_in_memory_check_updates(tmp_path):
     """Verify _check_history_updates updates UI when in-memory history manager item count changes."""
-    from history import HistoryItem, HistoryManager
+    from ytui.history import HistoryItem, HistoryManager
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -878,8 +869,8 @@ async def test_history_screen_in_memory_check_updates(tmp_path):
         table = hist_screen.query_one("#history-table", DataTable)
         assert table.row_count == 0
 
-        # Add item directly in-memory and call _check_history_updates
-        mgr.items.append(
+        # A download completing elsewhere adds to the shared manager; the screen's poll picks it up
+        mgr.add(
             HistoryItem(
                 id="mem-1",
                 title="In-Memory History Item",
@@ -891,9 +882,8 @@ async def test_history_screen_in_memory_check_updates(tmp_path):
                 format_note="1080p",
             )
         )
-        mgr.save()
 
-        hist_screen._check_history_updates()
+        hist_screen._poll()
         await pilot.pause()
 
         assert table.row_count == 1
@@ -902,7 +892,7 @@ async def test_history_screen_in_memory_check_updates(tmp_path):
 @pytest.mark.asyncio
 async def test_download_screen_rich_log_caching():
     """Verify RichLog only updates when log count or task changes."""
-    from manager import DownloadStatus, DownloadTask
+    from ytui.manager import DownloadStatus, DownloadTask
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -926,8 +916,8 @@ async def test_download_screen_rich_log_caching():
 
         rich_log = dl_screen.query_one("#task-rich-log", RichLog)
         assert len(rich_log.lines) == 2
-        assert dl_screen._last_log_count == 2
-        assert dl_screen._last_log_task_id == "log-task-1"
+        assert dl_screen._shown_log_total == 2
+        assert dl_screen._log_task_id == "log-task-1"
 
         # Calling _update_selected_details without log changes should retain lines without clearing
         dl_screen._update_selected_details()
@@ -939,13 +929,12 @@ async def test_download_screen_rich_log_caching():
         dl_screen._update_selected_details()
         await pilot.pause()
         assert len(rich_log.lines) == 3
-        assert dl_screen._last_log_count == 3
+        assert dl_screen._shown_log_total == 3
 
 
 @pytest.mark.asyncio
 async def test_settings_screen_propagates_config_to_download_manager():
-    """Verify saving settings updates DownloadManager.get_instance().config immediately."""
-    from manager import DownloadManager
+    """Verify saving settings updates the download manager's config immediately."""
 
     app = YtDlpApp()
     async with app.run_test() as pilot:
@@ -969,8 +958,8 @@ async def test_settings_screen_propagates_config_to_download_manager():
         await pilot.press("ctrl+s")
         await pilot.pause()
 
-        mgr = DownloadManager.get_instance()
-        assert mgr.config.max_concurrent_downloads == 7
+        assert app.manager.config.max_concurrent_downloads == 7
+        assert app.config.max_concurrent_downloads == 7
 
 
 
@@ -979,3 +968,143 @@ async def test_settings_screen_propagates_config_to_download_manager():
 
 
 
+
+
+@pytest.mark.asyncio
+async def test_bracketed_titles_render_literally():
+    """'[Official Video]' and '[id]' in paths used to be parsed as markup and silently dropped."""
+    from ytui.manager import DownloadStatus, DownloadTask
+
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        task = DownloadTask(
+            id="br-1", url="u", title="Song [Official Video]", status=DownloadStatus.COMPLETED,
+            video_format_label="1080p (FHD) [MP4]", output_filepath="/music/Song [dQw4w9WgXcQ].mp4",
+        )
+        app.manager.tasks = [task]
+        await pilot.press("ctrl+j")
+        await pilot.pause()
+        screen = app.screen
+        assert "Song [Official Video]" in str(screen.query_one("#inspector-title-line", Label).render())
+        assert "1080p (FHD) [MP4]" in str(screen.query_one("#inspector-meta-row", Label).render())
+        assert "Song [dQw4w9WgXcQ].mp4" in str(screen.query_one("#inspector-status-banner", Label).render())
+
+
+@pytest.mark.asyncio
+async def test_navigation_does_not_grow_screen_stack():
+    """search -> format -> queue -> search used to leave duplicate screens on the stack every cycle."""
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        extraction = ExtractionResult(
+            url="u", title="T", uploader="U", duration_str="1", thumbnail="",
+            video_formats=[FormatOption(format_id="18", format_type="video", label="360p", resolution="360p", height=360)],
+            audio_formats=[FormatOption(format_id="140", format_type="audio", label="128k", resolution="128k")],
+        )
+        for _ in range(3):
+            app.push_screen(FormatScreen(extraction))
+            await pilot.pause()
+            await pilot.press("ctrl+j")
+            await pilot.pause()
+            await pilot.press("ctrl+s")
+            await pilot.pause()
+        assert len(app.screen_stack) == 2
+        assert isinstance(app.screen, SearchScreen)
+
+
+@pytest.mark.asyncio
+async def test_format_screen_rejects_no_video_and_no_audio():
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        extraction = ExtractionResult(
+            url="u", title="T", uploader="U", duration_str="1", thumbnail="",
+            video_formats=[FormatOption(format_id="none", format_type="video", label="[No Video]", resolution="-", is_special=True)],
+            audio_formats=[FormatOption(format_id="none", format_type="audio", label="[No Audio]", resolution="-", is_special=True)],
+        )
+        app.push_screen(FormatScreen(extraction))
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        assert isinstance(app.screen, FormatScreen)
+        assert app.manager.tasks == []
+
+
+@pytest.mark.asyncio
+async def test_settings_discard_and_defaults_do_not_persist():
+    from ytui.config import AppConfig
+
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        screen = app.screen
+        inp = screen.query_one("#inp-max-concurrent", Input)
+
+        # Discarded edits must not reappear (and be saved) on the next visit
+        inp.value = "9"
+        await pilot.press("escape")
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        assert inp.value == str(app.config.max_concurrent_downloads)
+
+        # Defaults only fill the form; nothing is written until Ctrl+S
+        app.apply_config(app.config.replace(max_concurrent_downloads=6))
+        screen._load_form(app.config)
+        await pilot.press("ctrl+r")
+        await pilot.pause()
+        assert inp.value == "3"
+        assert AppConfig.load().max_concurrent_downloads == 6
+
+        # Invalid rate limits are refused instead of breaking every download
+        screen.query_one("#inp-rate-limit", Input).value = "fast"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert isinstance(app.screen, SettingsScreen)
+        assert app.config.max_concurrent_downloads == 6
+
+
+@pytest.mark.asyncio
+async def test_settings_save_applies_to_all_screens():
+    """Search used to keep its own stale config object, ignoring new cookies/proxy until restart."""
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        app.screen.query_one("#inp-proxy", Input).value = "socks5://127.0.0.1:9050"
+        await pilot.press("ctrl+s")
+        await pilot.pause()
+        assert app.config.proxy == "socks5://127.0.0.1:9050"
+        assert app.manager.config is app.config
+
+
+@pytest.mark.asyncio
+async def test_settings_edits_survive_ffmpeg_dialog_and_preview_is_reverted():
+    from ytui.screens.ffmpeg_modal import FfmpegSetupModal
+
+    app = YtDlpApp()
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        original_theme = app.theme
+        await pilot.press("ctrl+o")
+        await pilot.pause()
+        screen = app.screen
+        inp = screen.query_one("#inp-max-concurrent", Input)
+        inp.value = "8"
+        screen._dialog_open = True
+        app.push_screen(FfmpegSetupModal(is_first_launch=False))
+        await pilot.pause()
+        app.pop_screen()
+        await pilot.pause()
+        assert inp.value == "8"  # opening a dialog must not discard unsaved edits
+
+        screen.query_one("#sel-theme").cycle_next()  # live preview
+        await pilot.pause()
+        assert app.theme != original_theme
+        await pilot.press("ctrl+j")  # leave without saving
+        await pilot.pause()
+        assert app.theme == original_theme

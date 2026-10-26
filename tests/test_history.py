@@ -3,7 +3,7 @@
 from pathlib import Path
 from tempfile import TemporaryDirectory
 
-from history import HistoryItem, HistoryManager
+from ytui.history import HistoryItem, HistoryManager
 
 
 def test_history_item_properties():
@@ -18,7 +18,7 @@ def test_history_item_properties():
         format_note="bestaudio (mp3)",
         timestamp=1700000000.0,
     )
-    assert item.formatted_size == "10.00 MB"
+    assert item.formatted_size == "10.0 MB"
     assert "2023" in item.formatted_time or "2024" in item.formatted_time
 
 
@@ -145,3 +145,35 @@ def test_history_open_folder_windows(monkeypatch, tmp_path):
     assert recorded_calls[2] == f'explorer "{custom_dir.resolve()}"'
 
 
+
+
+def test_history_load_skips_bad_entries(tmp_path):
+    import json
+
+    path = tmp_path / "history.json"
+    good = {"id": "ok", "title": "T", "url": "u", "channel": "c", "duration_str": "1", "filepath": "f", "filesize_bytes": 1, "format_note": "n", "new_field": "ignored"}
+    path.write_text(json.dumps([good, {"id": "broken"}, "garbage"]), encoding="utf-8")
+    mgr = HistoryManager(storage_path=path)
+    # One malformed entry used to wipe the whole history on the next save
+    assert [item.id for item in mgr.items] == ["ok"]
+
+
+def test_history_corrupt_file_is_backed_up(tmp_path):
+    path = tmp_path / "history.json"
+    path.write_text("[{", encoding="utf-8")
+    mgr = HistoryManager(storage_path=path)
+    assert mgr.items == []
+    assert (tmp_path / "history.json.bak").exists()
+
+
+def test_history_version_changes_when_full():
+    # At the 500-item cap the count stays the same, so the UI must watch `version`, not len(items)
+    with TemporaryDirectory() as tmp:
+        mgr = HistoryManager(storage_path=Path(tmp) / "h.json")
+        for i in range(501):
+            mgr.add(HistoryItem(id=str(i), title="t", url="u", channel="c", duration_str="1", filepath=f"f{i}", filesize_bytes=1, format_note="n"))
+        version = mgr.version
+        mgr.add(HistoryItem(id="new", title="t", url="u", channel="c", duration_str="1", filepath="fnew", filesize_bytes=1, format_note="n"))
+        assert len(mgr.items) == 500
+        assert mgr.items[0].id == "new"
+        assert mgr.version != version

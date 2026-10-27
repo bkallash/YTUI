@@ -366,20 +366,6 @@ dist/yt-dlp-tui.exe
 
 ---
 
-## 🧪 Running Tests
-
-
-The test suite covers configuration management, yt-dlp format extraction, download queue management, Arabic/RTL text rendering, and asynchronous Textual UI screens:
-
-```bash
-pip install -e ".[dev]"
-python -m pytest tests/ -v
-```
-
-Tests run against a temporary home directory, so they never touch your real config, history or queue.
-
----
-
 ## 🗂️ Project Structure
 
 ```

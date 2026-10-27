@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ytui-media"
-version = "0.1.4"
+version = "0.2.0"
 description = "A sleek, keyboard-driven Terminal User Interface (TUI) client and download manager for yt-dlp"
 readme = "README.md"
 requires-python = ">=3.10"
@@ -52,7 +52,8 @@ dev = [
     "pytest-asyncio>=0.23.0",
     "build>=1.0.0",
     "twine>=5.0.0",
-    "pyinstaller>=6.0.0"
+    "pyinstaller>=6.0.0",
+    "tomli>=2.0.0; python_version < '3.11'"
 ]
 
 [project.urls]
